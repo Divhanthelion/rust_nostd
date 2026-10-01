@@ -43,9 +43,10 @@ jobs:
       - name: linux-bin
         working-directory: ${{ runner.temp }}/tpl/t-linux-bin
         run: cargo build --release && echo "shout this" | ./target/release/t-linux-bin a b c | grep -q "SHOUT THIS"
+      # QEMU writes semihosting output to stderr, hence 2>&1.
       - name: cortex-m (QEMU)
         working-directory: ${{ runner.temp }}/tpl/t-cortex-m
-        run: timeout 120 cargo run --release | grep -q "handled 10 SysTick interrupts"
+        run: timeout 120 cargo run --release 2>&1 | grep -q "handled 10 SysTick interrupts"
       - name: cortex-m-rt (QEMU)
         working-directory: ${{ runner.temp }}/tpl/t-cortex-m-rt
-        run: timeout 120 cargo run --release | grep -q "handled 10 SysTick interrupts"
+        run: timeout 120 cargo run --release 2>&1 | grep -q "handled 10 SysTick interrupts"
