@@ -4,3 +4,273 @@
 ## fundamentals
 Q: What are the three layers of the Rust standard library, and what does each need?
 A: `core`: the language support library, needs nothing. `alloc`: heap types (Box, Vec, String, Rc, Arc, BTreeMap), needs a global allocator. `std`: OS services (files, threads, net, time, stdio) and re-exports of core/alloc, needs an operating system.
+
+Q: What does `#![no_std]` actually change?
+A: The crate links `core` instead of `std`, and the prelude becomes `core::prelude`. Nothing else: you can still `extern crate alloc;` (if a global allocator exists) or even `extern crate std;` behind a feature. It's about *which libraries you depend on*, not a different language.
+
+Q: What must a `#![no_std]` *binary* provide that a library doesn't?
+A: A `#[panic_handler]`, an entry point (`#![no_main]` plus `_start`/a reset handler or a runtime crate), a way to stop (exit syscall or loop), and, if it uses `alloc`, a `#[global_allocator]`. On targets without unwinding, `panic = "abort"`. The compiler also expects `memcpy`/`memset`/`memcmp`/`memmove` (from compiler_builtins or your own).
+
+Q: What's the difference between `#![no_main]` and `#![no_std]`?
+A: `no_std` changes which library you link. `no_main` tells rustc not to generate the C `main` shim that calls your `fn main`, so you must supply the real entry symbol (`_start`, `Reset`) yourself. Freestanding programs need both; a no_std library needs neither of `no_main` nor an entry.
+
+Q: Name four things that are in `core` but people often assume need std.
+A: `core::fmt` (Display, Write, `write!`), `core::str::from_utf8`, iterators and slices (`sort_unstable`, `binary_search`, `chunks`), atomics (`core::sync::atomic`), `Cell`/`RefCell`, `Option`/`Result`, `core::time::Duration`, `core::net::Ipv4Addr` (1.77), `core::error::Error` (1.81), `Future`/`Waker`, `ptr::read_volatile`, `mem::MaybeUninit`.
+
+Q: Name things that are in std but *not* in core or alloc.
+A: Threads, `Mutex`/`RwLock` (the blocking ones), `HashMap`/`HashSet` (need a random seed source; use `hashbrown` or `BTreeMap`), files and I/O traits (`std::io::Read/Write`), `Instant`/`SystemTime`, environment variables, process control, and float math like `f32::sin`/`sqrt`/`powf` (use `libm`; simple ones like `abs` and `copysign` are in core on recent compilers).
+
+Q: Why is `HashMap` not in `alloc`?
+A: Its default hasher (SipHash with `RandomState`) needs OS randomness for HashDoS resistance. `alloc` has no OS. In no_std, use `BTreeMap` (in alloc), `hashbrown` with a fixed hasher, or `heapless::FnvIndexMap`.
+
+## memory
+Q: What lives in .text, .rodata, .data and .bss, and where does each live at runtime on an MCU?
+A: `.text`: code (flash). `.rodata`: constants and string literals (flash). `.data`: initialised statics: stored in flash (LMA), copied to RAM (VMA) at boot. `.bss`: zero-initialised statics: only their size is recorded, RAM is zeroed at boot. The reset handler does the copy and the zeroing before main.
+
+Q: `const` vs `static`: what's the difference?
+A: A `const` is a value inlined at every use (no fixed address; each use may be a fresh copy). A `static` is one object at one address for the whole program. Use `static` for anything with identity: buffers, atomics, peripherals' shared state. Interior mutability requires `static` + a `Sync` cell.
+
+Q: Why is `static mut` discouraged, and what replaces it?
+A: Any `&mut` to it can alias another reference: instant UB if two exist. Edition 2024 denies references to `static mut` (`static_mut_refs`). Replacements: atomics, `critical_section::Mutex<RefCell<T>>`, a `Sync` wrapper over `UnsafeCell` with a documented invariant, `static_cell::StaticCell` for one-time `&'static mut`, or `&raw mut STATIC` for raw access.
+
+Q: How do you build a `Vec`-like type without a heap?
+A: `[MaybeUninit<T>; N]` plus a `len: usize`. `push` writes slot `len` and returns `Err(value)` when full; `pop` reads slot `len-1` with `assume_init_read`; `Drop` drops exactly the initialised prefix; `Deref<Target=[T]>` via `slice::from_raw_parts`. Const generics make the capacity part of the type. (`heapless::Vec<T, N>` in production.)
+
+Q: How do you find the stack usage of embedded Rust code?
+A: Statically: `-Z emit-stack-sizes` + `cargo call-stack` (nightly), or a commercial analyser; avoid recursion and function pointers to keep it analysable. Dynamically: paint the stack with a pattern at boot and measure the high-water mark. Protect against overflow with `flip-link` (stack below .data/.bss so overflow faults instead of corrupting statics) or an MPU guard region.
+
+Q: What is `MaybeUninit<T>` for, and what's the rule?
+A: Memory that may not hold a valid `T` yet (buffers, out-params, arrays built element by element). The rule: never create a `&T` or read a `T` until it's initialised; then `assume_init`/`assume_init_read`. `mem::uninitialized()` and `mem::zeroed()` for types where zero isn't valid are UB.
+
+Q: Why prefer `heapless`-style fixed collections over `alloc` in firmware?
+A: Bounded, compile-time-known memory (no fragmentation, no OOM at runtime), allocation-free hot paths with deterministic timing, and `push` that returns `Err` instead of aborting. Safety standards (MISRA 21.3, ISO 26262 guidance) restrict dynamic allocation after init.
+
+## alloc
+Q: How do you use `Vec` in a no_std binary?
+A: `extern crate alloc;`, then provide `#[global_allocator] static HEAP: SomeAlloc = ...;` implementing `GlobalAlloc` (e.g. `embedded_alloc::LlffHeap` initialised over a static array). Without a global allocator the link fails. Out-of-memory calls the alloc error handler, which panics/aborts.
+
+Q: What does `GlobalAlloc::alloc` receive, and what must it guarantee?
+A: A `Layout` (size and power-of-two alignment). Return a pointer to at least `size` bytes aligned to `align`, or null on failure; never unwind. `dealloc` gets the same layout back. Size zero is never requested via `GlobalAlloc` (callers handle ZSTs).
+
+Q: What's an arena (bump) allocator and when is it the right choice?
+A: A pointer that advances through a buffer; allocation is round-up-and-add, frees are no-ops, and everything is released at once by resetting. Ideal for per-request/per-frame scratch memory: O(1), no fragmentation, deterministic. Wrong for long-lived objects freed in arbitrary order.
+
+Q: What's a common safety-relevant policy for heap use in ECUs?
+A: Allocate only during initialisation, then forbid allocation in the cyclic/runtime phase. In Rust: build fixed structures at startup (or use `static` buffers) and possibly a global allocator that refuses requests after a "sealed" flag is set.
+
+## errors
+Q: What happens when Rust code panics in a `panic = "abort"` no_std binary?
+A: The `#[panic_handler]` runs with a `&PanicInfo` (message, location). It must never return (`-> !`): typically log, record a fault code, put outputs in a safe state, then reset or loop. No unwinding, no destructors run.
+
+Q: List common hidden panics in Rust code.
+A: Indexing `v[i]` and slicing `&s[a..b]`, `unwrap`/`expect`, integer division by zero (and `MIN / -1`), arithmetic overflow when overflow-checks are on, `RefCell::borrow_mut` while borrowed, `copy_from_slice` with mismatched lengths, `str` slicing off a char boundary, `Duration` arithmetic, and explicit `panic!`/`unreachable!`/`todo!`.
+
+Q: How do you write and prove panic-free code?
+A: Use `get`/`get_mut`, `checked_*`/`saturating_*`/`wrapping_*`, `split_at_checked` (1.80), iterators instead of indices, `?` with error enums. Enforce with clippy (`indexing_slicing`, `unwrap_used`, `arithmetic_side_effects`), and verify by linking with a panic handler that references an undefined symbol (the `panic-never` trick): if any panic path survives optimisation, linking fails.
+
+Q: Integer overflow: what happens in debug vs release, and how do you choose?
+A: Debug: panic (overflow-checks on). Release: two's-complement wrap (checks off), unless `overflow-checks = true` in the profile. Don't rely on either: state intent with `wrapping_add` (counters, CRCs), `checked_add` (validate), or `saturating_add` (sensors, control). Many safety projects enable overflow checks in release.
+
+Q: How do you design error types in a no_std library?
+A: A small `enum` per module/operation, `#[derive(Debug, Clone, Copy, PartialEq, Eq)]`, `impl Display` (and `core::error::Error`, stable since 1.81), `#[non_exhaustive]` if it may grow, `From` impls for `?` conversions. No `Box<dyn Error>`, no `String` messages: data, not text.
+
+## sync
+Q: When is a type `Send`, when is it `Sync`, and why do they matter without threads?
+A: `Send`: safe to move to another execution context. `Sync`: `&T` is safe to share (`T: Sync` ⇔ `&T: Send`). Interrupt handlers are another execution context, so a `static` must be `Sync`. `Cell`/`RefCell` aren't `Sync`, which is why you can't put one in a `static` without a mutex or critical section.
+
+Q: What's a critical section on a single-core MCU, and what does it cost?
+A: Disable interrupts (`cpsid i`, PRIMASK), do the work, restore the previous state. Nothing can preempt you, so shared data is safe. Cost: interrupt latency rises by the section's length, for all interrupts. Keep them short, never nest blocking calls inside. It is *not* enough on multi-core (other cores keep running).
+
+Q: Explain `Relaxed`, `Acquire`, `Release` and `SeqCst`.
+A: `Relaxed`: atomicity only, no ordering of other memory (counters, statistics). `Release` (on a store) publishes all earlier writes; `Acquire` (on a load) that reads that value sees them: the pair forms a happens-before edge (flags, queues, locks). `AcqRel` for read-modify-write. `SeqCst` adds one global order across all SeqCst operations; rarely needed and easy to over-use.
+
+Q: How does a lock-free SPSC ring buffer work?
+A: Two indices: the producer alone writes `head`, the consumer alone writes `tail`. Producer: write the slot, then `head.store(h+1, Release)`. Consumer: `head.load(Acquire)`, read the slot, `tail.store(t+1, Release)`. Full when `head - tail == N` (wrapping arithmetic), empty when equal. No CAS, no locks, safe between an ISR and main. `heapless::spsc` is the production version.
+
+Q: Why can a spinlock deadlock in an interrupt handler on a single core?
+A: If main holds the lock and an ISR preempts it and spins on the same lock, main never runs again to release it. Fix: disable interrupts while holding the lock (critical section), use lock-free structures, or design with priority ceilings (RTIC).
+
+Q: What does `AtomicBool::compare_exchange` do, and when do you use the `_weak` variant?
+A: Atomically: if the current value equals `current`, store `new` and return `Ok(old)`; else `Err(actual)`. `compare_exchange_weak` may fail spuriously (LL/SC architectures like ARM), so use it in a retry loop; it can compile to tighter code there. Use the strong one for single attempts.
+
+Q: thumbv6m has no CAS. What still works and what doesn't?
+A: Atomic `load` and `store` work (word-sized). `fetch_add`, `swap`, `compare_exchange` don't exist. Use critical sections, the `portable-atomic` crate (with the `critical-section` feature), or designs that need only loads/stores (SPSC queues).
+
+## unsafe
+Q: What does `unsafe` allow you to do that safe Rust doesn't?
+A: Five things: dereference raw pointers, call `unsafe` functions (incl. FFI), access `static mut`, implement `unsafe` traits (`Send`, `Sync`, `GlobalAlloc`), and access union fields. It does *not* turn off the borrow checker or type checking. You take responsibility for the invariants the compiler can't see.
+
+Q: What's the difference between unsafe being "sound" and "safe"?
+A: Code is sound if no safe caller can cause UB through its API, whatever they do. A sound abstraction contains `unsafe` inside but upholds every invariant itself (bounds, aliasing, initialisation, lifetimes). Document why with `// SAFETY:` per block and a `# Safety` section on every `unsafe fn` listing the caller's obligations.
+
+Q: Why must MMIO use volatile reads/writes?
+A: The compiler may otherwise merge, reorder relative to other volatile accesses, or delete accesses it thinks are redundant (e.g. polling a status register in a loop becomes an infinite loop on a cached value; two writes to a FIFO register become one). `read_volatile`/`write_volatile` force exactly one access of the given width per call. Use them via raw pointers, never `&`-references to registers.
+
+Q: How do type-state APIs prevent misuse of hardware?
+A: Encode the state in the type: `Pin<Output>` vs `Pin<Input>`, `Uart<Disabled>` → `enable()` → `Uart<Enabled>`. Methods consume `self` and return the new state type, so calling `write` on a disabled UART or a pin configured as input is a compile error. Zero runtime cost (zero-sized markers).
+
+Q: What does `#[repr(C)]` guarantee, and when do you need it?
+A: C-compatible field order and padding (fields in declaration order with C alignment rules). Needed for FFI structs, memory-mapped register blocks, and binary formats. `repr(Rust)` may reorder fields. Related: `repr(transparent)` (same layout as the single field), `repr(u8)` on enums, `repr(packed)` (no padding; references to fields are UB-prone).
+
+Q: What tools help find undefined behaviour in unsafe code?
+A: Miri (interprets MIR; detects out-of-bounds, use-after-free, invalid values, aliasing violations under Stacked/Tree Borrows, data races), sanitizers (`-Zsanitizer=address`), Kani for bounded proofs, fuzzing to reach odd inputs, and clippy's `undocumented_unsafe_blocks` to force justifications.
+
+## freestanding
+Q: How does a Linux program start without libc?
+A: The kernel jumps to the ELF entry (`_start`) with `rsp` pointing at `argc`, then `argv[]`, NULL, `envp[]`, NULL, auxv. Your `_start` (global_asm) passes the stack pointer to a Rust function, which reads argc/argv, calls main, and invokes the `exit_group` syscall. Link with `-nostartfiles -static` (and usually `-no-pie`).
+
+Q: How do you make a Linux syscall from Rust on x86_64?
+A: `asm!("syscall", inlateout("rax") nr => ret, in("rdi") a1, in("rsi") a2, in("rdx") a3, lateout("rcx") _, lateout("r11") _, options(nostack))`. Return values in -4095..-1 are `-errno`. On aarch64: `svc #0` with the number in `x8`, args in `x0..x5`, result in `x0`. Numbers differ per arch (write is 1 on x86_64, 64 on aarch64).
+
+Q: Why might a freestanding binary fail to link with "undefined reference to memcpy"?
+A: rustc lowers copies, struct moves and loops to calls to `memcpy`/`memset`/`memmove`/`memcmp`/`bcmp`, normally provided by libc. Without libc, provide them (compiler_builtins' `mem` feature, or your own `#[unsafe(no_mangle)] extern "C" fn memcpy`), and compile that code with `#![no_builtins]` so LLVM doesn't turn your memcpy loop into a call to memcpy.
+
+Q: What does `read` returning `-EINTR` mean, and how do you handle it?
+A: A signal interrupted the call before any data was transferred. Retry the call. Also handle short reads/writes: `write` may write fewer bytes than asked, so loop until all bytes are written (`write_all`).
+
+## bare-metal
+Q: Walk through what happens from power-on to `main` on a Cortex-M.
+A: The core reads word 0 of the vector table (at 0x0 or the VTOR address) into SP and word 1 into PC: the reset handler. The reset handler copies `.data` from flash to RAM, zeroes `.bss`, optionally enables the FPU and sets up clocks, then calls `main` (which never returns). `cortex-m-rt` does exactly this behind `#[entry]`.
+
+Q: What's in a Cortex-M vector table?
+A: Entry 0: the initial stack pointer. 1: Reset. 2-15: system exceptions (NMI, HardFault, MemManage, BusFault, UsageFault, reserved slots, SVCall, DebugMon, PendSV, SysTick). From 16: device interrupts (IRQ0..). Handler addresses have bit 0 set (Thumb). The linker script places it at the start of flash.
+
+Q: What does a linker script do for firmware?
+A: Declares the memory regions (`MEMORY { FLASH : ORIGIN = 0x08000000, LENGTH = 512K; RAM : ... }`), places sections (`.vector_table` first, `.text`/`.rodata` in flash, `.data` in RAM AT> FLASH, `.bss` in RAM), exports symbols for the startup code (`_sdata`, `_edata`, `_sidata`, `_sbss`, `_ebss`, `_stack_start`) and can `ASSERT` invariants (alignment, sizes).
+
+Q: What's semihosting, and why not use it in production?
+A: A debug mechanism: the target executes `bkpt 0xAB` with an operation code in r0, and the debugger/QEMU performs I/O on the host (print, read files, exit). Without a debugger attached, the breakpoint causes a HardFault (or hangs). It's also very slow. Production logging uses UART, RTT or defmt.
+
+Q: What is a HardFault and how do you debug one?
+A: The catch-all fault (escalated bus/usage/memory faults, invalid instructions, unaligned access on M0, executing from non-executable memory). Debug: a HardFault handler that reads the stacked exception frame (PC, LR, xPSR), plus the CFSR/HFSR/BFAR/MMFAR registers on M3+; with a probe, `probe-rs` shows the backtrace. Common causes: stack overflow, null/garbage pointers, missing Thumb bit, wrong vector table.
+
+Q: Why put `#[inline(never)]` or `-> !` on functions like the reset handler or panic handler?
+A: `-> !` (never type) tells the compiler control can't return, enabling simpler code and catching accidental returns at compile time. The reset handler must never return because there's nothing to return to. `#[inline(never)]` keeps a function visible as a symbol for debuggers and stack analysis.
+
+## hal
+Q: What is embedded-hal and why does it matter?
+A: A set of traits (1.0: `digital::OutputPin`, `i2c::I2c`, `spi::SpiDevice`, `delay::DelayNs`, plus `embedded-hal-async`) that HALs implement and drivers depend on. A driver written once against the traits works on STM32, nRF, RP2040, ESP32 and in host tests with mocks: the hardware abstraction is a compile-time generic, no runtime cost.
+
+Q: Why does embedded-hal 1.0 have both `SpiBus` and `SpiDevice`?
+A: `SpiBus` is the raw bus (clock + data lines). `SpiDevice` is one device on a shared bus: it owns chip-select and guarantees exclusive access for a transaction. Drivers take `SpiDevice`, so several drivers can share one bus safely (via `embedded-hal-bus` wrappers like `RefCellDevice` or `CriticalSectionDevice`).
+
+Q: How do you unit-test a driver without hardware?
+A: Make the driver generic over embedded-hal traits and test with mocks: `embedded-hal-mock` expectations (I2C write [0x75] then read [0x68]) or a hand-written fake implementing the trait that records transactions. All logic (register encoding, scaling, error handling) runs on the host in `cargo test`.
+
+Q: What's a PAC, and how does it relate to a HAL?
+A: A Peripheral Access Crate is generated by `svd2rust` from the vendor's SVD file: typed register blocks with `read`/`write`/`modify` and field accessors, plus singletons (`Peripherals::take()`) so each peripheral is owned once. A HAL builds safe, higher-level drivers (GPIO, UART, timers) on the PAC and implements embedded-hal.
+
+## async
+Q: What does an `async fn` compile into?
+A: An anonymous type implementing `Future`: a state machine (enum) whose variants hold the locals live across each `.await`. `poll` resumes from the last suspension point. No heap is needed; the future's size is the size of its largest state, which matters on small MCUs.
+
+Q: What's a `Waker` and how does an embedded executor use it?
+A: A handle (data pointer + vtable of clone/wake/wake_by_ref/drop) that a pending future stores; calling `wake()` tells the executor to poll that task again. Embedded executors encode the task index in the data pointer and set a bit in a ready mask (often from an ISR), then the executor loop polls ready tasks and sleeps (`wfi`) when none are ready.
+
+Q: What does "cancellation is drop" mean in async Rust?
+A: A future that is dropped before completion simply stops at its last `.await`; destructors run, no more code executes. `select` drops the loser. So every `.await` point must leave the system consistent: e.g. don't leave a peripheral half-configured or a lock flag set without a drop guard.
+
+Q: What's the lost-wakeup race with `wfi`, and how is it fixed?
+A: Checking "no work" and then executing `wfi` races with an interrupt arriving between the two: the CPU sleeps with work pending. Fix: disable interrupts, check, `wfi` (which still wakes on a *pending* masked interrupt), then re-enable so the ISR runs. Alternatively use `wfe`/`sev` event semantics.
+
+## interrupts
+Q: How do NVIC priorities work on Cortex-M?
+A: Lower number = more urgent. Only the top N bits of the 8-bit field are implemented (often 3-4). An interrupt preempts only if strictly more urgent than the current execution priority; equal priority waits (tail-chained after the current handler). PRIMASK masks all configurable interrupts; BASEPRI masks only those at or below a threshold urgency.
+
+Q: What is priority inversion, and how does the priority ceiling protocol prevent it?
+A: A high-priority task blocks on a resource held by a low-priority task, while a medium task preempts the low one: the high task waits for the medium one. Priority ceiling: each resource has a ceiling = the highest priority of any task using it; locking raises the holder to the ceiling, so no task that shares the resource can preempt it. RTIC and AUTOSAR OS resources use this; blocking is bounded and deadlock-free.
+
+Q: Five rules for interrupt handlers?
+A: Keep them short (copy data, clear the flag, signal). Never block or wait on locks held by lower priorities. Always clear the interrupt source. Share data only through atomics, critical sections or lock-free queues. No allocation and no panicking paths. Defer heavy work to the main loop or a lower-priority task.
+
+## ffi
+Q: How do you export a Rust function to C in edition 2024?
+A: `#[unsafe(no_mangle)] pub extern "C" fn crc8(data: *const u8, len: usize) -> u8`. Use only FFI-safe types (`repr(C)` structs, integers, raw pointers, `Option<&T>`/`Option<extern fn>`), never panic across the boundary (catch it or use `panic = "abort"`; unwinding out of `extern "C"` aborts since 1.81), and generate the header with `cbindgen`.
+
+Q: How do you call a C function from Rust in edition 2024?
+A: Declare it in `unsafe extern "C" { fn adc_read(ch: u8) -> i32; }` (items can be marked `safe fn` if they truly are), link the library (build.rs `cargo:rustc-link-lib`), and wrap it in a safe Rust function that validates arguments and converts errors. `bindgen` generates declarations from headers.
+
+Q: A C API gives you `const char *name` and `uint8_t *buf, size_t len`. How do you turn them into Rust types safely?
+A: Check for null first. `CStr::from_ptr(name)` (needs a NUL terminator, valid for the borrow) then `to_str()` for UTF-8. `slice::from_raw_parts(buf, len)` (non-null, aligned, `len` elements initialised, not mutated during the borrow; use a dangling pointer for len 0). Document these as the function's `# Safety` contract.
+
+Q: Who frees memory that crosses an FFI boundary?
+A: The allocator that allocated it. Rust-allocated objects go back to Rust through an exported `xyz_free` function (`Box::from_raw`); C-allocated memory is freed by C's `free`. Mixing allocators is UB. Better still in embedded: caller-provided buffers, no ownership transfer at all.
+
+Q: How does an opaque handle pattern work across FFI?
+A: C sees `typedef struct Filter Filter;` and only pointers to it. Rust exports `filter_new() -> *mut Filter` (`Box::into_raw`), `filter_push(*mut Filter, ...)`, `filter_free(*mut Filter)` (`Box::from_raw` and drop). Rust keeps full control of the layout and invariants; C can't touch the fields. In no_std without alloc, use a caller-allocated, size-checked buffer instead.
+
+## can
+Q: Why does the lowest CAN identifier win arbitration?
+A: CAN uses a wired-AND bus: dominant (0) overrides recessive (1). Nodes send their ID bit by bit and monitor the bus; a node that sends recessive but reads dominant has lost and stops transmitting. The ID with the first 0 where others have 1 (the numerically lowest) wins, and its frame is uncorrupted (non-destructive arbitration).
+
+Q: Classical CAN vs CAN FD?
+A: Classical: up to 8 data bytes, one bit rate (up to 1 Mbit/s). CAN FD: up to 64 bytes, and a faster data phase (bit rate switch) after arbitration; DLC 9-15 encode 12, 16, 20, 24, 32, 48, 64 bytes; a stronger CRC. Arbitration and IDs are the same.
+
+Q: Intel vs Motorola byte order in a DBC signal?
+A: Intel (`@1`, little-endian): the start bit is the LSB, and the signal grows into higher bits and bytes. Motorola (`@0`, big-endian): the start bit is the MSB; walking toward less significant bits goes down within a byte, then to bit 7 of the next byte. A 16-bit Motorola signal at start bit 7 is `data[0] << 8 | data[1]`.
+
+Q: How does ISO-TP send 100 bytes over classical CAN?
+A: A First Frame (PCI 1, 12-bit length = 100, first 6 bytes). The receiver answers with Flow Control (PCI 3: continue, block size, separation time). The sender then sends Consecutive Frames (PCI 2, sequence number 1..15 then 0 wrapping, 7 bytes each): 94 remaining bytes = 14 CFs. Messages of up to 7 bytes fit a Single Frame (PCI 0).
+
+Q: What's in a J1939 29-bit identifier?
+A: Priority (3 bits), EDP and DP (data page bits), PDU Format (8), PDU Specific (8: destination address if PF < 240, else group extension), Source Address (8). The PGN (parameter group number) is built from EDP/DP/PF and PS when PF >= 240. Example: EEC1 (engine speed) is PGN 61444 = 0xF004.
+
+Q: What are CAN error states?
+A: Each node has a transmit and receive error counter. Error active (normal, sends active error flags), error passive (TEC or REC > 127: sends passive flags, waits extra before retransmitting), bus off (TEC > 255: stops participating; recovers after 128 × 11 recessive bits, often requiring software intervention). This confines a faulty node so it can't disrupt the bus.
+
+Q: What is UDS, and name three services.
+A: Unified Diagnostic Services (ISO 14229), the request/response diagnostic protocol over ISO-TP (or DoIP on Ethernet). Services: DiagnosticSessionControl (0x10), ECUReset (0x11), ReadDataByIdentifier (0x22), SecurityAccess (0x27), WriteDataByIdentifier (0x2E), RoutineControl (0x31), RequestDownload (0x34), ReadDTCInformation (0x19). Positive responses are SID + 0x40; negative responses are `7F SID NRC`.
+
+## safety
+Q: What is an ASIL and how is it determined?
+A: Automotive Safety Integrity Level (ISO 26262): QM, A, B, C, D (most stringent). A hazard analysis and risk assessment (HARA) rates each hazardous event by Severity (S0-S3), Exposure (E0-E4) and Controllability (C0-C3); the combination gives the ASIL, which sets the rigour of development, verification and hardware metrics.
+
+Q: What is freedom from interference?
+A: The guarantee that a lower-ASIL (or QM) element cannot cause a higher-ASIL element to fail. Three dimensions: spatial (memory corruption: MPU, memory partitioning, Rust ownership), temporal (CPU time: watchdogs, deadline monitoring, timing protection) and communication (data exchange: E2E protection).
+
+Q: What is a safe state and the FTTI?
+A: A safe state is an operating mode with no unreasonable risk (e.g. outputs off, torque limited, limp-home). The fault-tolerant time interval is the time from a fault occurring until a hazard could occur; detection plus reaction (the fault handling time) must fit within it.
+
+Q: How does AUTOSAR E2E protection work?
+A: The sender adds a CRC (computed over the data and a Data ID that isn't transmitted) and an alive counter; the receiver checks both every cycle plus a timeout. CRC + Data ID catch corruption and masquerade; the counter catches repetition, loss and wrong sequence; the timeout catches loss and delay. Results (OK, REPEATED, WRONG_CRC, NO_NEW_DATA...) feed a state machine that decides whether data is usable.
+
+Q: What are alive, deadline and logical supervision?
+A: Watchdog manager checks: alive = a supervised entity reports checkpoints at an expected rate (count per cycle within [min, max]); deadline = time between two checkpoints stays within bounds; logical = checkpoints occur in an allowed order (control-flow graph). Failure beyond tolerance stops the hardware watchdog trigger, causing a reset into the safe state.
+
+Q: What is integrator windup and anti-windup?
+A: When a controller's output saturates, the integral term keeps accumulating error, so when the error reverses the controller overshoots badly until the integral unwinds. Anti-windup: stop integrating in the saturating direction (conditional integration), clamp the integral, or back-calculate. In fixed-point code, also saturate every operation.
+
+Q: How does Rust address MISRA C concerns, and what remains your job?
+A: Built in: memory safety, no uninitialised reads, bounds checks, no implicit conversions, `Result` + `#[must_use]`, data-race freedom, explicit and auditable `unsafe`. Still your job: panics (policy + lints), integer overflow behaviour, recursion/stack bounds, unbounded loops, allocation policy, and the soundness of each `unsafe` block. Coding guidelines (Safety-Critical Rust Consortium) and a qualified toolchain (Ferrocene) complete the picture.
+
+Q: What is MC/DC coverage?
+A: Modified Condition/Decision Coverage: every condition in a decision must be shown to independently affect the decision's outcome. ISO 26262-6 highly recommends it for ASIL D unit testing. For `a && (b || c)`, you need test cases where flipping just one condition flips the result. rustc's MC/DC instrumentation is still experimental.
+
+Q: What is counter-based debouncing of fault reports (AUTOSAR DEM)?
+A: Each pre-failed report increments a counter (by a step), each pre-passed report decrements it. Reaching the failed threshold qualifies the fault (DTC stored, reaction triggered); reaching the passed threshold heals it. It filters glitches while guaranteeing detection within a bounded number of cycles, which must fit in the FTTI.
+
+## tooling
+Q: How do you make a crate support no_std, alloc and std users at once?
+A: `#![no_std]` always; `[features] alloc = []`, `std = ["alloc"]`; `#[cfg(feature = "alloc")] extern crate alloc;` and the same for std; gate each API item on the feature it needs. Keep features additive, depend on others with `default-features = false`, and test every combination plus a build for a bare-metal target in CI.
+
+Q: Which clippy lints would you deny in a safety-relevant no_std crate?
+A: `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects` (or warn), `cast_possible_truncation`, `as_conversions`, `undocumented_unsafe_blocks`, `missing_safety_doc`, `float_arithmetic` where floats are banned; plus rustc's `unsafe_code` (forbid outside audited crates), `missing_docs`, `unused_results`. Exceptions via `#[allow(.., reason = "..")]` under review.
+
+Q: How do you test no_std code at different levels?
+A: Unit tests on the host (`cargo test`, `#[cfg(test)] extern crate std`), property tests (proptest), fuzzing (cargo fuzz) for parsers, Miri for UB, Kani for bounded proofs, mutation testing (cargo mutants), on-target tests (embedded-test/defmt-test + probe-rs), QEMU in CI, and HIL rigs. Architecture makes it possible: pure no_std logic crates + thin hardware layers behind traits.
+
+Q: How do you reduce firmware size?
+A: `opt-level = "s"`/`"z"`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`; avoid `core::fmt` (use defmt) and float formatting; watch generic monomorphisation; measure with `cargo size`, `cargo bloat` and the linker map. Nightly: `-Z build-std` with `panic_immediate_abort`. Keep `debug = true`: debug info doesn't go into flash.
+
+Q: Name four practices for reproducible, auditable Rust builds.
+A: Pin the toolchain (`rust-toolchain.toml`, or a qualified Ferrocene release), commit `Cargo.lock`, declare `rust-version` (MSRV), and audit dependencies (`cargo deny`, `cargo audit`, `cargo vet`). Plus CI that builds the exact target and feature sets, and few dependencies to keep the qualification effort small.
+
+## career
+Q: "Why Rust for automotive?" Give a structured answer.
+A: What: a systems language with C-level performance and control. Why: the most common critical vulnerabilities and many safety defects in C (memory and data-race bugs) become compile errors; explicit `unsafe` concentrates review effort; strong types encode units and states. Trade-off: ecosystem and tool qualification are younger (Ferrocene exists now), developers must be trained, and C/C++ integration is needed for years. Example: a panic-free CAN decoder with validated types, tested on the host and linked into a C ECU build.
+
+Q: How would you introduce Rust into an existing C ECU codebase?
+A: Incrementally at well-defined boundaries: pick a self-contained, high-risk component (a parser, protocol stack, or diagnostic service), implement it as a no_std staticlib with a `#[repr(C)]`/`extern "C"` API and a cbindgen header, integrate it into the existing build and tests, and measure (size, timing, defects). Keep `unsafe` at the FFI edge, align with the safety process (coding guidelines, qualified toolchain), and grow from there.
+
+Q: Tell me about a time you had to make code panic-free (STAR outline).
+A: Situation: an RPN calculator / CAN decoder had to handle any input. Task: no panics, every failure reported. Action: replaced indexing with `get`, used `checked_*` arithmetic (including `MIN / -1`), fixed buffers with explicit overflow errors, an error enum with Display, tests for each malformed case, clippy restriction lints to keep it that way. Result: defined behaviour for every input, enforced by CI. Use your own code from this course.

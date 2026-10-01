@@ -107,8 +107,8 @@ scaled by 2⁻ⁿ. In **Q16.16**, the raw `i32` value 98 304 means 98304 / 65536
   error, not a panic;
 - conversions: decide and document the rounding (toward zero, half away).
 
-Control loops (PID) built on saturating fixed-point are deterministic, bit-
-exact across platforms, and testable on the host. A classic safety detail
+Control loops (PID) built on saturating fixed-point are deterministic,
+bit-exact across platforms, and testable on the host. A classic safety detail
 is **anti-windup**: when the output saturates, stop integrating in the
 saturating direction, or the integral term "winds up" and the controller
 overshoots badly once the error reverses.

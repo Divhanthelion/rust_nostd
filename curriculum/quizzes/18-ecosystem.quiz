@@ -1,0 +1,97 @@
+? You need a fixed-capacity `Vec` and `String` on a microcontroller. Which crate?
+- `alloc`
+* `heapless`
+- `smallvec` with default features
+- `arrayvec` is the only option
+> `heapless` provides `Vec<T, N>`, `String<N>`, `Deque`, `IndexMap` and lock-free `spsc` queues with const-generic capacity.
+
+? A driver crate uses `critical_section::with`. Who provides the implementation?
+- The driver crate itself
+* The final binary, by enabling one implementation (e.g. `cortex-m`'s `critical-section-single-core` feature)
+- The compiler
+- `core::sync`
+> Libraries call the API; exactly one implementation is linked by the application, matching its platform (single-core, multi-core, RTOS).
+
+? A sensor driver should work on any MCU. What should it depend on?
+- The STM32 HAL
+* `embedded-hal` (and `embedded-hal-async`) traits, taking the bus as a generic parameter
+- `cortex-m`
+- `std::io`
+> Drivers written against the traits work with every HAL that implements them, and with mocks in host tests.
+
+? Which pair gives you deferred, compact logging over a debug probe?
+- `log` + `env_logger`
+* `defmt` + `probe-rs` (RTT transport)
+- `println!` + semihosting
+- `tracing` + `tokio-console`
+> defmt sends interned format-string indices plus raw arguments; the host decodes them. Much smaller and faster than `core::fmt`.
+
+? You want async firmware with a static executor and interrupt-woken HAL futures. Which framework?
+- tokio
+- async-std
+* Embassy
+- smol
+> tokio and friends need std. Embassy's executor, timers and HALs are no_std and allocation-free.
+
+? You want compile-time-checked resource sharing using the priority-ceiling protocol. Which framework?
+* RTIC
+- Embassy
+- FreeRTOS
+- `critical-section`
+> RTIC computes each resource's ceiling statically and locks by raising BASEPRI: no deadlocks, bounded blocking.
+
+? `fetch_add` doesn't exist on `AtomicU32` for thumbv6m (Cortex-M0). What crate restores it?
+- `heapless`
+- `atomic-polyfill` is built into core
+* `portable-atomic` (CAS emulated with critical sections)
+- `spin`
+> thumbv6m has load/store atomics but no CAS instructions. portable-atomic fills the gap.
+
+? Which toolchain is qualified for ISO 26262 up to ASIL D?
+- Nightly Rust with `-Z build-std`
+* Ferrocene
+- Any stable rustc after 1.80
+- rustc_codegen_gcc
+> Ferrocene is a qualified downstream of rustc with a pinned version, a certified core subset and a qualification kit.
+
+? You need to serialise structs into compact bytes for a no_std link between two MCUs. Which combination fits?
+- `serde_json` with std
+* `serde` with `default-features = false` + `postcard`
+- `bincode` with default features
+- `ron`
+> postcard is designed for no_std (varint encoding, no allocation required).
+
+? An interviewer asks "how do you know your library is really no_std?" Which answer is strongest?
+- "It has `#![no_std]` at the top"
+- "We run `cargo test`"
+* "CI builds it with `--no-default-features` for a bare-metal target such as thumbv7em-none-eabihf, and tests every feature combination"
+- "We never import std"
+> Only a target without std proves no dependency pulled it in.
+
+? In a safety interview: "What does the alive counter in E2E protection detect?"
+- Data corruption
+* Repeated, lost and out-of-order messages (a frozen or replaying sender)
+- Masquerading senders
+- Timing violations only
+> The CRC (with the Data ID) catches corruption and masquerade; the counter catches repetition, loss and sequence errors; a timeout catches loss/delay.
+
+? "Why does a watchdog manager *stop* kicking the hardware watchdog?"
+- To save power
+* Because supervision failed (alive, deadline or logical); letting the hardware watchdog expire forces the system into its safe state
+- Because the watchdog is optional at runtime
+- To test the watchdog
+> The watchdog manager turns software supervision results into a hardware-enforced reaction.
+
+? "Where should `unsafe` live in a safety-relevant Rust codebase?"
+- Wherever it's convenient
+- Nowhere: safety projects forbid it entirely
+* In a few small, audited modules (register access, FFI, allocators) behind safe APIs, each block with a `// SAFETY:` justification; `#![forbid(unsafe_code)]` elsewhere
+- Only in `main.rs`
+> Real firmware needs unsafe at the hardware edge. The skill is to minimise and encapsulate it, and argue each block's soundness.
+
+? Most production ECU code at an OEM is still C/C++. Which skill makes a Rust engineer most immediately useful there?
+- Rewriting everything in Rust
+* Safe FFI: wrapping C APIs, exporting `extern "C"` functions, matching layouts with `#[repr(C)]`, and owning the ownership rules at the boundary
+- Avoiding C entirely
+- Writing proc macros
+> Incremental adoption happens at the boundary: Rust components linked into existing C builds and vice versa.

@@ -423,7 +423,7 @@ pub static MODULES: &[Module] = &[
                 r#"Implement Display for your error enum to produce the exact messages, then `eprintln!("rpn: line {n}: {e}")`. Blank lines: eval returns Ok(None) and nothing is printed, but the line still counts."#,
             ]),
         ],
-        quiz: None,
+        quiz: quiz!("10-cli"),
     },
     Module {
         num: 11,
@@ -595,7 +595,33 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("16-safety"),
     },
+    Module {
+        num: 17,
+        slug: "portable",
+        title: "Portable Crates, Lints & Tooling",
+        summary: "std/alloc feature gating, strict lints, testing strategy, size budgets and toolchain hygiene",
+        lesson: lesson!("17-portable"),
+        exercises: &[
+            ex!("17_portable", "portable1", "One crate for firmware, heap users and std users", Mode::LibFeatures(&[&[], &["alloc"], &["alloc", "std"]]), [
+                r#"Gate the crate links: `#[cfg(feature = "alloc")] extern crate alloc;` and `#[cfg(feature = "std")] extern crate std;`."#,
+                r#"Then gate each item that mentions them: `parse_vec` needs `#[cfg(feature = "alloc")]`; `ReadError` and `parse_reader` need `#[cfg(feature = "std")]`. `parse_into` and `ParseError` stay ungated."#,
+                r#"Read the checker's output: it reports which feature set failed, e.g. "[no features]", and the compiler error points at the first ungated use."#,
+            ]),
+            ex!("17_portable", "lints1", "Hardening a crate with lints", Mode::Lib, [
+                r#"Start with the errors that change code: replace `from_utf8_unchecked` with `core::str::from_utf8(bytes).map_err(|_| DecodeError::BadName)`, add `?` to the first `write!`, and delete the pointless `mem::replace` line (or use `core::mem::swap`)."#,
+                r#"`r.channel as u8` and `r.value as i32` are casts to the same type: drop the `as`. `core::cmp::max` → just `max` (it's imported). `fmt::Formatter` → `fmt::Formatter<'_>`."#,
+                r#"Add `#[derive(Debug)]` to `Record` and `Show`, and a `///` doc comment to every public item: structs, fields, enum variants and functions."#,
+            ]),
+        ],
+        quiz: quiz!("17-portable"),
+    },
+    Module {
+        num: 18,
+        slug: "ecosystem",
+        title: "The Ecosystem & Next Steps",
+        summary: "mapping what you built onto real crates, project templates, and interview preparation",
+        lesson: lesson!("18-ecosystem"),
+        exercises: &[],
+        quiz: quiz!("18-ecosystem"),
+    },
 ];
-
-#[allow(dead_code)]
-const _USE: (Option<Case>, Option<Expect>) = (None, None);

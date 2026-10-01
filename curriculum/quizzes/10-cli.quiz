@@ -1,0 +1,63 @@
+? Your `wc` reads stdin in 512-byte chunks. A word "embedded" straddles two chunks. How do you avoid counting it twice?
+- Use a bigger buffer so words never straddle chunks
+* Keep the "inside a word" flag outside the read loop, so state carries across chunk boundaries
+- Re-read the previous chunk's last 16 bytes
+- Count spaces instead of words
+> No buffer size prevents splits; only carried state does. The flag is the entire memory `wc` needs.
+
+? A line-oriented tool assembles lines in a fixed `[u8; 1024]`. Input contains a 5000-byte line. What is the professional answer?
+- Grow the buffer with `Vec`
+- Let the index panic: such input is invalid anyway
+* Decide and document a policy (truncate, process in pieces, or report an error and a non-zero exit), then implement it without panicking
+- Silently drop the line
+> Without a heap, buffer limits are a design decision. The decision belongs in the docs, and every path is defined.
+
+? The input ends with `"last line"` and no trailing `\n`. What must the program do after `read` returns `Ok(0)`?
+- Nothing: lines without a newline are not lines
+* Process the partial line still in the line buffer if its length is non-zero
+- Return an error
+- Append a newline to stdout first
+> Forgetting the last line is the most common streaming bug.
+
+? Which pattern matches an argument like `-lw` (one or more flag letters) and binds the letters?
+| match arg { ??? => for &f in flags { /* ... */ }, _ => {} }
+- `[b'-', ..] if true`
+* `[b'-', flags @ ..] if !flags.is_empty()`
+- `"-" + flags`
+- `b"-*"`
+> Slice patterns with `@ ..` bind the rest of the slice. The guard rejects a bare `-`, which conventionally means stdin.
+
+? Where do diagnostics belong, and why?
+- stdout, so the user always sees them
+* stderr, so pipelines like `tool | wc -l` only see results on stdout
+- A log file
+- Both, to be safe
+> Mixing errors into stdout corrupts downstream input.
+
+? By convention, what does `grep` return when no line matched?
+- 0
+* 1
+- 2
+- 101
+> 0 = matched, 1 = no match, 2 = error (usage, I/O). 101 is Rust's panic exit code.
+
+? Your RPN calculator evaluates `i64::MIN / -1`. What happens with `a / b` in a release build, and what should you use?
+- It wraps to `i64::MIN`; that's fine
+- It returns 0
+* `/` panics on this overflow even in release builds; use `checked_div` and turn `None` into an error
+- It's undefined behaviour
+> Division overflow (and division by zero) always panics in Rust, independent of `overflow-checks`. `checked_div` returns `None` for both.
+
+? Why do `args.get(i)` slices from the runtime have a `'static` lifetime?
+- They are copied into a static buffer at startup
+* They point into the argument strings the kernel placed on the initial stack, which live for the whole program
+- `'static` is required by `#![no_main]`
+- They are leaked `Box<[u8]>`s
+> The kernel's `argv` strings are never freed, so borrowing them for `'static` is sound and needs no copy.
+
+? What is the cleanest way to make an error enum produce messages like `stack underflow` for `eprintln!`?
+- A `to_string()` method returning `String`
+* Implement `core::fmt::Display` for it
+- `#[derive(Debug)]` and print with `{:?}`
+- Store `&'static str` messages in a global array
+> Display works with any `fmt::Write` sink, allocates nothing, and keeps the message next to the type.

@@ -1,0 +1,69 @@
+? Why is `#![no_std]` + `#[cfg(feature = "std")] extern crate std;` preferred over `#![cfg_attr(not(feature = "std"), no_std)]`?
+- It compiles faster
+* The prelude is identical in every configuration, so code can't silently depend on std-only prelude items when the feature is on
+- It enables alloc automatically
+- cfg_attr doesn't work with no_std
+> With cfg_attr, enabling std switches to the std prelude, making it easy to write code that breaks without the feature.
+
+? Your no_std crate depends on `foo`, which has `default = ["std"]`. What should you write?
+- `foo = "1"`
+* `foo = { version = "1", default-features = false }`, plus forwarding `std = ["foo/std"]` in your own features
+- `foo = { version = "1", features = ["no_std"] }`
+- Nothing: features are disabled for no_std crates automatically
+> Otherwise foo's std feature is on for every user of your crate, and Cargo's feature unification spreads it.
+
+? Why must Cargo features be additive?
+* Cargo unifies features across the dependency graph: if any crate enables a feature, every user gets it, so enabling a feature must never remove or change API
+- Because features are sorted alphabetically
+- Features can't be disabled once published
+- To keep compile times low
+> A "no_std" feature that removes std support would break other crates in the same build.
+
+? What is the strongest check that a crate and all its dependencies are really no_std?
+- `cargo test --no-default-features`
+- `grep -r std src/`
+* `cargo build --no-default-features --target thumbv7em-none-eabihf` (a target that has no std at all)
+- `cargo clippy`
+> On the host, a dependency can link std without anyone noticing. A bare-metal target simply doesn't have it.
+
+? Which lint makes any `unsafe` block a hard error that can't be re-allowed further down?
+- `#![deny(unsafe_code)]`
+* `#![forbid(unsafe_code)]`
+- `#![warn(unsafe_op_in_unsafe_fn)]`
+- `clippy::undocumented_unsafe_blocks`
+> `forbid` can't be overridden by inner `allow` attributes, unlike `deny`.
+
+? Which clippy lint flags `v[i]` because it can panic?
+- `clippy::unwrap_used`
+* `clippy::indexing_slicing`
+- `clippy::as_conversions`
+- `clippy::panic`
+> It's a restriction lint, off by default, aimed at panic-free code.
+
+? A tool explores your Rust function for *all* inputs up to a bound and proves an assertion can't fail. Which one?
+- Miri
+- proptest
+* Kani
+- cargo-fuzz
+> Kani is a bounded model checker for Rust. Miri detects UB on executed paths; proptest and fuzzing sample inputs.
+
+? In a firmware release profile, why is `debug = true` harmless for flash size?
+* Debug info lives in non-loaded ELF sections; the flash image only contains .text/.rodata/.data
+- Because the linker compresses it
+- It isn't harmless: it doubles flash usage
+- Debug info is stripped by the MCU at boot
+> Keep it for debugging with probe-rs/GDB; measure flash usage with `cargo size`, not the ELF file size.
+
+? What does a `rust-toolchain.toml` file do?
+- Lists crate dependencies
+* Pins the toolchain channel/version, targets and components for everyone building the project
+- Configures clippy lints
+- Defines the linker script
+> Reproducible builds start with a pinned compiler; safety projects pin a qualified version.
+
+? Which tool checks dependencies for licenses, banned crates and security advisories?
+- cargo-bloat
+* cargo-deny
+- cargo-binutils
+- cargo-expand
+> cargo-deny (and cargo-audit/cargo-vet) help manage supply-chain risk, which also reduces review and qualification effort.
