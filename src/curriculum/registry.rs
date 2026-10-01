@@ -506,6 +506,34 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("13-hal"),
     },
+    Module {
+        num: 14,
+        slug: "async",
+        title: "Interrupts & Async",
+        summary: "NVIC priorities and preemption, ISR patterns, RTIC, futures, wakers and executors",
+        lesson: lesson!("14-interrupts-async"),
+        exercises: &[
+            ex!("14_async", "isr1", "Interrupt arbitration, the NVIC's way", Mode::Lib, [
+                r#"The bookkeeping methods are bit operations on `enabled`/`pending` (`|= 1 << irq`, `&= !(1 << irq)`) after an `irq >= NUM_IRQS` check. set_priority stores `prio & 0xE0`."#,
+                r#"select: return None if primask. Candidates = `self.enabled & self.pending`. Map each candidate i to `(self.priority[i], i)`: tuples compare by priority first, then IRQ number, so `.min()` picks the right winner."#,
+                r#"Filters: when `running == Some(p)` keep only `prio < p` (`running.is_none_or(|r| prio < r)`); when `basepri & 0xE0 != 0` keep only `prio < basepri & 0xE0`."#,
+                r#"acknowledge: `let irq = self.select(..)?; self.pending &= !(1 << irq); Some(irq)`."#,
+            ]),
+            ex!("14_async", "async1", "async/await with nothing but core", Mode::Lib, [
+                r#"block_on_with: `let mut fut = pin!(fut); let mut cx = Context::from_waker(Waker::noop()); loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } idle(); }`. block_on is block_on_with with an empty closure."#,
+                r#"YieldNow::poll: the first time, set `yielded`, call `cx.waker().wake_by_ref()` and return Pending; afterwards return Ready(())."#,
+                r#"join2: `pin!` both futures, keep `Option` slots for their outputs, and inside `poll_fn(|cx| ...)` only poll a future whose slot is still None. Return Ready when both slots are Some."#,
+                r#"select2: poll a, then b, returning the first Ready wrapped in Either. sleep_until: `poll_fn(move |cx| if clock.now() >= deadline { Poll::Ready(()) } else { cx.waker().wake_by_ref(); Poll::Pending })`."#,
+            ]),
+            ex!("14_async", "async2", "A static executor with real wakers", Mode::Lib, [
+                r#"wake_by_ref: decode `let v = data as usize; let (exec, task) = (v >> 8, v & 0xFF);` and `READY[exec].fetch_or(1 << task, Ordering::Release)` (use `.get(exec)` to stay panic-free). clone: `RawWaker::new(data, &VTABLE)`; wake: call wake_by_ref."#,
+                r#"waker_for: `unsafe { Waker::from_raw(RawWaker::new(((exec << 8) | task) as *const (), &VTABLE)) }`. The pointer is never dereferenced, it's just an integer in disguise."#,
+                r#"spawn: find a free slot with `self.tasks.iter().position(Option::is_none)`, store the task, and set its ready bit so it gets polled the first time."#,
+                r#"run_until_idle: `loop { let ready = READY[self.id].swap(0, Acquire); if ready == 0 { return polls } for i in 0..N { if bit i set and the slot holds a task: poll it with `Context::from_waker(&waker_for(self.id, i))`; clear the slot if Ready } }`. Signal::wait: take the value if present, otherwise store `cx.waker().clone()` and return Pending."#,
+            ]),
+        ],
+        quiz: quiz!("14-async"),
+    },
 ];
 
 #[allow(dead_code)]

@@ -1,0 +1,69 @@
+? On a Cortex-M NVIC, which interrupt is more urgent?
+* The one with the lower priority number
+- The one with the higher priority number
+- The one with the lower IRQ number, regardless of priority
+- The one that was enabled first
+> Priority 0 is the most urgent configurable level. Ties between equal priorities go to the lower exception number.
+
+? An interrupt of the same priority as the running handler becomes pending. What happens?
+- It preempts the running handler
+* It waits until the running handler returns, then runs (tail-chaining)
+- It is lost
+- The CPU raises a HardFault
+> Preemption requires strictly higher urgency.
+
+? What does setting BASEPRI to a non-zero value do?
+- Masks every interrupt, like PRIMASK
+* Masks interrupts whose priority value is >= BASEPRI, leaving more urgent ones enabled
+- Raises the priority of the running handler
+- Disables the NVIC
+> RTIC uses BASEPRI to implement resource locks without blocking unrelated higher-priority tasks.
+
+? Why is `if no_events() { wfi() }` racy, and how is it fixed?
+- It isn't racy
+* An interrupt can arrive between the check and `wfi`, so the CPU sleeps with work pending; fix by disabling interrupts, checking, `wfi` (which still wakes on pending interrupts), then re-enabling
+- `wfi` can't be used in Rust
+- Use a spinlock around `wfi`
+> `wfi` wakes on pending interrupts even when PRIMASK masks them, which makes the disable-check-sleep-enable sequence correct.
+
+? What must an interrupt handler usually do before returning?
+- Re-enable all interrupts
+* Clear the peripheral's interrupt flag (or read/write the register that does), or it re-enters immediately
+- Call the executor
+- Allocate a buffer for the next event
+> Most peripherals keep the IRQ line asserted until the cause is acknowledged.
+
+? What is the job of `Waker::wake`?
+- Run the task immediately on the current stack
+* Tell the executor the task can make progress, so it should be polled again
+- Cancel the future
+- Allocate a new task
+> Executors decide when to poll; wakers just mark tasks ready (e.g. set a bit, push to a queue).
+
+? What happens to an in-flight future when `select` completes with the other branch?
+* It's dropped (cancelled) at its current `.await` point
+- It keeps running in the background
+- It is restarted from the beginning next time
+- It panics
+> Cancellation by drop means code must remain correct if stopped at any await point.
+
+? Why are Embassy tasks declared with `#[embassy_executor::task]` statically sized?
+- To make them faster
+* So task storage is reserved at compile time: no heap, and running out of tasks is detected at spawn time
+- Because async closures aren't supported
+- So they can run on multiple cores
+> The future's state machine size is known at compile time, and Embassy places it in a static arena.
+
+? How does the priority-ceiling protocol (RTIC, AUTOSAR OS resources) prevent priority inversion?
+- By disabling all interrupts while any resource is held
+* A task holding a resource runs at the highest priority of any task that uses it, so no medium-priority task can preempt it while a high-priority task waits
+- By giving each task its own copy of the resource
+- By using spinlocks
+> It also makes deadlock impossible, and blocking time is bounded by the longest critical section.
+
+? Which of these is in `core`?
+- An executor
+- `embassy_time::Timer`
+* `Future`, `Poll`, `Context`, `Waker`, `RawWakerVTable` and `Waker::noop`
+- `tokio::spawn`
+> core provides the async plumbing; executors come from crates (Embassy, RTIC's async tasks) or your own code.
