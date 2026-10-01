@@ -1,0 +1,76 @@
+? Which three factors determine an ASIL in ISO 26262's hazard analysis?
+- Cost, complexity and code size
+* Severity, Exposure and Controllability
+- Probability, latency and redundancy
+- Voltage, temperature and vibration
+> HARA rates each hazardous event by S, E and C; the combination yields QM or ASIL A-D.
+
+? What is "freedom from interference"?
+- Running every component on its own MCU
+* Ensuring lower-integrity software can't corrupt higher-integrity software in memory, timing or communication
+- Avoiding radio interference on CAN
+- Removing all interrupts from safety code
+> Mechanisms include MPU partitioning (space), watchdogs/timing protection (time) and E2E protection (communication).
+
+? In E2E protection, why is a Data ID included in the CRC even though it isn't transmitted?
+- To make the CRC longer
+* So a frame from a different message (masquerade) fails the CRC check even if its bytes are internally consistent
+- To encrypt the payload
+- To detect repeated frames
+> Repetition and loss are detected by the alive counter; the Data ID catches wrongly routed or masquerading messages.
+
+? An E2E receiver sees the same alive counter value twice in a row. What does it report?
+- OK
+* REPEATED: the sender may be frozen or the frame was duplicated
+- WRONG CRC
+- NO NEW DATA
+> A stuck counter is a classic symptom of a sender whose task stopped but whose communication stack keeps resending the last frame.
+
+? Why does a watchdog manager stop kicking the hardware watchdog when supervision expires?
+- To save power
+* So the independent hardware watchdog resets the MCU and brings the system to its safe state
+- Because the CPU is too busy
+- To log the fault
+> The hardware watchdog is the final, independent safety mechanism.
+
+? Alive supervision for a task expects 3 to 5 checkpoints per cycle but sees 9. What does that indicate?
+* A runaway or looping task, which is as much a failure as too few
+- Nothing: more is better
+- A deadline violation
+- A logical supervision error
+> The upper bound catches tasks executing too often, e.g. stuck in a loop that keeps reporting.
+
+? What is integrator windup in a PID controller?
+- The integral term resetting every cycle
+* While the output is saturated, the integral keeps accumulating, causing large overshoot once the error reverses
+- The derivative amplifying noise
+- Overflow of the proportional term
+> Anti-windup stops integration in the saturating direction (conditional integration or back-calculation).
+
+? In Q16.16 fixed point, what does the raw value 0x0001_8000 represent?
+- 98304
+- 1.8
+* 1.5
+- 0.5
+> 0x18000 / 65536 = 1.5.
+
+? Why should leaving SafeState usually require a power cycle rather than a "fault cleared" event?
+- Because state machines can't have cycles
+* A latched safe state prevents oscillating in and out of safety reactions on intermittent faults; recovery is a deliberate, controlled event
+- To make testing easier
+- It reduces code size
+> Intermittent faults must not re-enable outputs on their own; the safety concept defines the controlled recovery path.
+
+? What does counter-based fault debouncing (as in AUTOSAR DEM) achieve?
+- It hides all faults
+* It filters single glitches while still qualifying persistent faults within a bounded number of reports
+- It encrypts DTCs
+- It replaces the watchdog
+> Thresholds and step sizes define both robustness against noise and the worst-case detection time.
+
+? Which Rust feature most directly replaces MISRA C's rules about unchecked error information (Dir 4.7)?
+- `unsafe` blocks
+* `Result` with `#[must_use]` and the `?` operator
+- `static mut`
+- Macros
+> Ignoring a `Result` produces a warning (deny it in safety code), and `?` makes propagation explicit and cheap.

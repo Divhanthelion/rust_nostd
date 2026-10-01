@@ -562,6 +562,39 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("15-can"),
     },
+    Module {
+        num: 16,
+        slug: "safety",
+        title: "Automotive II: Functional Safety Patterns",
+        summary: "ISO 26262 vocabulary, E2E protection, watchdog supervision, fixed-point control, mode management",
+        lesson: lesson!("16-safety"),
+        exercises: &[
+            ex!("16_safety", "e2e1", "End-to-end protection for CAN signals", Mode::Lib, [
+                r#"crc8_update: for each byte `crc ^= b`, then 8 times `crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x1D } else { crc << 1 }`. crc8_j1850 = `crc8_update(0xFF, data) ^ 0xFF`."#,
+                r#"frame_crc: start from 0xFF, feed `data_id.to_le_bytes()`, then `&frame[1..]`, then XOR with 0xFF."#,
+                r#"protect: `frame[1] = (frame[1] & 0xF0) | self.counter; frame[0] = frame_crc(..); self.counter = (self.counter + 1) % 15;`."#,
+                r#"check: NoNewData → CRC → counter > 14 → Initial (if no last). Then `delta = (counter + 15 - last) % 15` and match 0 / 1 / up to max_delta / larger. Don't update `last` for Repeated or for errors."#,
+            ]),
+            ex!("16_safety", "wdg1", "A watchdog manager", Mode::Lib, [
+                r#"alive: `self.alive_count.get_mut(entity)` and `saturating_add(1)`; return false for unknown entities. kick_allowed: `self.status != Status::Expired`."#,
+                r#"checkpoint: cp must be < 16; the first checkpoint is always allowed; otherwise check `self.transitions[prev] & (1 << cp) != 0`. On violation set Expired right away. Always remember cp as the last checkpoint."#,
+                r#"deadline_end: `match self.deadline_start.take() { Some(t0) if now.wrapping_sub(t0) <= self.deadline_max => {}, _ => self.deadline_violated = true }`."#,
+                r#"end_cycle: compute ok = every count within [min, max] && no deadline violation; reset counts and the flag; if already Expired stay Expired; ok → failed_cycles = 0, Ok; else failed_cycles += 1 and Failed or Expired (if > tolerance)."#,
+            ]),
+            ex!("16_safety", "fixed1", "Fixed-point math and a PID controller", Mode::Lib, [
+                r#"Use the given `saturate(i64) -> i32` for everything that can overflow: from_milli is `saturate(m as i64 * 65536 / 1000)`, to_milli is `(raw as i64 * 1000 / 65536) as i32` (it always fits)."#,
+                r#"Add/Sub/Neg: `saturating_add`, `saturating_sub`, `saturating_neg` on the raw i32. Mul: `saturate((a as i64 * b as i64) >> 16)`. checked_div: None if b == 0, else `saturate((a as i64) << 16 / b as i64)` (mind the parentheses)."#,
+                r#"update: compute error, p, d (zero without a previous error), `i_new = self.integral + self.ki * error`, and `unclamped = p + i_new + d`."#,
+                r#"Anti-windup: commit `self.integral = i_new` only if unclamped is within [out_min, out_max], or if `(unclamped > out_max && error < 0) || (unclamped < out_min && error > 0)`. Then store prev_error and return `unclamped.clamp_to(out_min, out_max)`."#,
+            ]),
+            ex!("16_safety", "fsm1", "An ECU mode manager and fault debouncing", Mode::Lib, [
+                r#"transition: `Some(match (mode, event) { (Off, PowerOn) => (Startup, &[RunSelfTest]), ..., _ => return None })`. Or-patterns like `(Run | Degraded, FaultMajor)` keep the table compact."#,
+                r#"handle: on Some((next, actions)) set the mode and return Ok(actions); on None increment `rejected` (saturating) and return Err(self.mode)."#,
+                r#"report: move the counter (`saturating_add(inc).min(fail_threshold)` or `saturating_sub(dec).max(pass_threshold)`), derive the verdict from the thresholds, and only return it if it differs from `self.last`."#,
+            ]),
+        ],
+        quiz: quiz!("16-safety"),
+    },
 ];
 
 #[allow(dead_code)]
