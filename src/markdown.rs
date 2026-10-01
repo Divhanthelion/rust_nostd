@@ -145,13 +145,28 @@ fn wrap_styled(text: &str, width: usize, first: &str, rest: &str) -> Vec<String>
         words.push(current);
     }
 
+    // Words longer than a line are cut into line-sized chunks; every chunk
+    // after the first starts a new line with no space before it.
+    let limit = width.saturating_sub(visible_width(rest)).max(1);
+    let mut chunks: Vec<(Vec<(String, Sty)>, bool)> = Vec::new();
+    for w in words {
+        let ww: usize = w.iter().map(|(s, _)| s.chars().count()).sum();
+        if ww <= limit {
+            chunks.push((w, false));
+        } else {
+            for (k, c) in split_word(&w, limit).into_iter().enumerate() {
+                chunks.push((c, k > 0));
+            }
+        }
+    }
+
     let mut lines = Vec::new();
     let mut line = String::from(first);
     let mut line_w = visible_width(first);
     let mut empty = true;
-    for w in words {
+    for (w, cont) in chunks {
         let ww: usize = w.iter().map(|(s, _)| s.chars().count()).sum();
-        if !empty && line_w + 1 + ww > width {
+        if !empty && (cont || line_w + 1 + ww > width) {
             lines.push(std::mem::take(&mut line));
             line.push_str(rest);
             line_w = visible_width(rest);
@@ -401,6 +416,40 @@ fn is_block_start(line: &str) -> bool {
         || t.starts_with('|')
         || t == "---"
         || is_list_item(line).is_some()
+}
+
+/// Cut one styled word into chunks of at most `limit` characters, preferring
+/// to break after `-`, `_`, `:`, `/`, `,`, `.` or `|` in the second half of a chunk.
+fn split_word(w: &[(String, Sty)], limit: usize) -> Vec<Vec<(String, Sty)>> {
+    let chars: Vec<(char, Sty)> = w.iter().flat_map(|(s, st)| s.chars().map(move |c| (c, *st))).collect();
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let mut end = (start + limit).min(chars.len());
+        if end < chars.len() {
+            if let Some(k) = (start + limit / 2..end).rev().find(|&k| matches!(chars[k].0, '-' | '_' | ':' | '/' | ',' | '.' | '|')) {
+                end = k + 1;
+            }
+        }
+        let mut chunk: Vec<(String, Sty)> = Vec::new();
+        for &(c, st) in &chars[start..end] {
+            match chunk.last_mut() {
+                Some((s, last)) if *last == st => s.push(c),
+                _ => chunk.push((c.to_string(), st)),
+            }
+        }
+        out.push(chunk);
+        start = end;
+    }
+    out
+}
+
+/// Wrap one paragraph of inline markdown, with prefixes for the first and
+/// following lines (which may contain ANSI styling).
+pub fn wrap(text: &str, width: usize, first: &str, rest: &str) -> String {
+    let mut out = wrap_styled(text, width, first, rest).join("\n");
+    out.push('\n');
+    out
 }
 
 fn render_table(rows: &[Vec<String>], width: usize) -> String {
@@ -694,5 +743,15 @@ mod tests {
         let md = "| a | b |\n|---|---|\n| `x` | y |\n";
         let out = render(md, 80);
         assert!(out.contains("│ x"));
+    }
+
+    #[test]
+    fn long_words_never_overflow() {
+        crate::term::set_color(false);
+        let md = "| a | b |\n|---|---|\n| short | `critical_section::with(|cs| ..)` and critical-section-single-core |\n";
+        let out = render(md, 40);
+        let widths: Vec<usize> = out.lines().filter(|l| !l.trim().is_empty()).map(crate::term::visible_width).collect();
+        assert!(widths.iter().all(|w| *w == widths[0]), "ragged table:\n{out}");
+        assert!(wrap("x supercalifragilistic", 10, "", "").lines().all(|l| l.chars().count() <= 10));
     }
 }

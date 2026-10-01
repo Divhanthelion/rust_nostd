@@ -1,0 +1,62 @@
+? Which part of `println!` actually requires an operating system?
+- Parsing the format string
+- Converting integers to decimal text
+* Writing the finished text to stdout
+- Building `fmt::Arguments`
+> All formatting lives in `core::fmt`. Only the destination (stdout) is an OS service. Point `write!` at your own sink and you have printing in no_std.
+
+? What must you implement to use `write!(sink, ...)` on your own type?
+- `core::fmt::Display`
+* `core::fmt::Write::write_str`
+- `std::io::Write::write`
+- `core::fmt::Arguments`
+> `fmt::Write` requires only `write_str`; `write_char` and `write_fmt` are provided, and `write!` calls `write_fmt`.
+
+? What does `format_args!("{} km/h", v)` allocate?
+* Nothing: it builds an `fmt::Arguments` on the stack referencing `v`
+- A `String` holding the result
+- A heap buffer sized for the formatted output
+- Nothing, but only when `v` is an integer
+> `fmt::Arguments` is a lazily evaluated recipe (pieces + references to values). It allocates nothing; formatting happens when a sink consumes it.
+
+? Your `fmt::Write` sink is full. What should `write_str` return?
+- `Ok(())` and silently drop the text
+* `Err(fmt::Error)`, after storing whatever prefix your policy allows
+- `panic!`, since the buffer was too small
+- `Err` with a message describing the overflow
+> `fmt::Error` is a unit struct: it carries no message. Returning it stops the rest of the `write!`. Panicking in a sink is a bad idea in firmware.
+
+? Inside `Display::fmt`, why might `f.pad(s)` be the wrong choice for a number with decimals?
+- It doesn't support width
+* It interprets the precision (`{:.2}`) as a maximum number of characters and truncates
+- It requires alloc
+- It always right-aligns
+> For strings, precision means truncation. For numeric text, use `pad_integral` or apply padding yourself.
+
+? Which is usually the largest code-size cost of formatting on a microcontroller?
+- Integer `Display`
+* Floating-point formatting (`{}` on an `f32`)
+- `write_str` calls
+- The `fmt::Write` trait object
+> Exact shortest round-trip float printing is a lot of code. Firmware often formats fixed-point integers instead, or uses `defmt` so formatting happens on the host.
+
+? What does `defmt` do differently from `core::fmt`?
+- It formats on the target but uses less RAM
+* It sends an interned format-string index plus raw argument bytes; the host does the formatting
+- It replaces `write!` with a faster heap-based implementation
+- It only works with semihosting
+> Deferred formatting keeps strings out of flash and formatting code out of the firmware. The host-side tool (e.g. probe-rs) decodes the log stream using the ELF file.
+
+? `format!("{:#06x}", 0x1Au16)` produces:
+- `0x1a`
+* `0x001a`
+- `00001a`
+- `0x00001a`
+> The width (6) includes the `0x` prefix when `#` is used, and `0` pads with zeros after the prefix.
+
+? How can a `Debug` impl render one field in hex without allocating a `String`?
+- `.field("id", &format!("{:#x}", self.id))`
+* `.field("id", &format_args!("{:#x}", self.id))`
+- It can't; `debug_struct` requires `String` fields
+- Implement `LowerHex` for the whole struct
+> `fmt::Arguments` implements `Debug` and `Display`, so it can stand in as a field value with custom formatting, no allocation needed.

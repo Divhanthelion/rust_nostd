@@ -1,0 +1,69 @@
+? Which of these does an `unsafe` block NOT allow?
+- Dereferencing a raw pointer
+- Calling an `unsafe fn`
+* Ignoring the borrow checker for references
+- Accessing a `static mut`
+> `unsafe` grants exactly five extra abilities. Borrow checking and type checking of references still apply.
+
+? A safe public function contains an `unsafe` block. When is that function sound?
+- When the unsafe block has a `// SAFETY:` comment
+- When the tests pass
+* When no possible input from safe code can cause undefined behaviour
+- Always, because the function is marked safe
+> Soundness is a property over *all* inputs. If some input can trigger UB, the function must check it or be marked `unsafe fn` with a documented contract.
+
+? Why are memory-mapped register accesses done with `read_volatile`/`write_volatile`?
+- Volatile accesses are atomic
+* The compiler must not merge, remove or reorder them, because each access has hardware side effects
+- Volatile memory is faster
+- Registers can only be accessed through `unsafe` code
+> Without volatile, the optimiser may drop a read whose result looks unused, combine two writes, or hoist a status poll out of a loop.
+
+? Is `write_volatile` a substitute for an atomic operation or a memory fence?
+- Yes, volatile implies SeqCst ordering
+* No: volatile only prevents the compiler from eliding/reordering *that* access; it gives no atomicity or ordering for other memory
+- Yes, on single-core systems
+- Only for 32-bit values
+> For synchronisation use atomics/fences; for device access use volatile. They solve different problems.
+
+? STM32's BSRR register lets you set pin n by writing `1 << n` and reset it with `1 << (n + 16)`. Why is that better than `ODR |= 1 << n`?
+* It's a single write, so an interrupt can't interleave and lose another pin's update the way a read-modify-write can
+- It uses less power
+- ODR is read-only
+- It allows setting more than 16 pins
+> Read-modify-write sequences on shared registers are race conditions; set/clear registers make the update atomic in hardware.
+
+? What does type-state (e.g. `Pin<5, Output>`) buy you?
+- Faster code at runtime because the mode is checked dynamically
+* Calling an operation that's invalid in the current hardware state (like `set_high` on an input) becomes a compile error, at zero runtime cost
+- Automatic interrupt handling
+- It removes the need for `unsafe` in the PAC
+> Mode is encoded in the type; transitions consume `self`; the markers are zero-sized.
+
+? Why is creating `&packed_struct.field` an error for a `#[repr(packed)]` struct?
+- Packed structs are immutable
+* The field may be misaligned, and references must always be aligned
+- Packed structs can't contain integers
+- It's allowed only in unsafe blocks
+> Copy the field out (`{ s.field }`) or use `ptr::read_unaligned(&raw const s.field)`.
+
+? Why shouldn't you transmute a received byte into a `#[repr(u8)] enum`?
+- `transmute` doesn't work with enums
+* If the byte isn't one of the declared discriminants, the result is an invalid value, which is UB; use `TryFrom<u8>`
+- It changes endianness
+- Enums are always 4 bytes
+> Validity invariants: an enum must hold one of its variants' discriminants. Check untrusted data first.
+
+? What does `#[repr(transparent)]` guarantee for `struct Meters(u32)`?
+* It has exactly the same layout and ABI as `u32`, so it can cross FFI boundaries where a `u32` is expected
+- It is always passed by reference
+- Its fields are public
+- It is `Copy`
+> transparent newtypes are free at runtime and ABI-compatible with their inner type.
+
+? Which tool interprets your tests to detect undefined behaviour such as out-of-bounds pointer reads or aliasing violations?
+- Clippy
+- rustfmt
+* Miri
+- cargo-bloat
+> `cargo +nightly miri test` catches most UB in unsafe code on the host.

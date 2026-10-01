@@ -1,0 +1,52 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  verify:
+    name: verify course (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, "1.85"]   # 1.85 is the declared minimum (edition 2024)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: thumbv7m-none-eabi
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - run: cargo build --locked
+      - run: cargo test --locked
+      # Every reference solution passes, every untouched exercise fails, and
+      # quizzes, flashcards and the `where` table are valid. --strict: a
+      # missing tool (blocked exercise) fails the job instead of being skipped.
+      - run: ./target/debug/nostd --no-color dev verify -j 4 --strict
+
+  templates:
+    name: nostd new templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7m-none-eabi
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - run: cargo build --locked
+      - name: scaffold
+        run: |
+          mkdir "$RUNNER_TEMP/tpl" && cd "$RUNNER_TEMP/tpl"
+          for t in lib linux-bin cortex-m cortex-m-rt; do "$GITHUB_WORKSPACE/target/debug/nostd" --no-color new "$t" "t-$t"; done
+      - name: lib
+        working-directory: ${{ runner.temp }}/tpl/t-lib
+        run: cargo test && cargo build --no-default-features --target thumbv7m-none-eabi
+      - name: linux-bin
+        working-directory: ${{ runner.temp }}/tpl/t-linux-bin
+        run: cargo build --release && echo "shout this" | ./target/release/t-linux-bin a b c | grep -q "SHOUT THIS"
+      # QEMU writes semihosting output to stderr, hence 2>&1.
+      - name: cortex-m (QEMU)
+        working-directory: ${{ runner.temp }}/tpl/t-cortex-m
+        run: timeout 120 cargo run --release 2>&1 | grep -q "handled 10 SysTick interrupts"
+      - name: cortex-m-rt (QEMU)
+        working-directory: ${{ runner.temp }}/tpl/t-cortex-m-rt
+        run: timeout 120 cargo run --release 2>&1 | grep -q "handled 10 SysTick interrupts"

@@ -104,7 +104,7 @@ fn split_runtime() -> (String, String) {
     let rt = rt
         .replace(
             "// Stop LLVM from recognising the byte loops below as \"memcpy idioms\" and\n// replacing them with calls to... memcpy. That would recurse forever.\n#![no_builtins]\n",
-            "// Link the libc-replacement symbols (a separate #![no_builtins] crate).\nextern crate nostd_mem;\n",
+            "// Link the libc-replacement symbols, which live in a separate no_builtins crate.\nextern crate nostd_mem;\n",
         )
         .replace("use core::ffi::{c_char, c_int, c_void};", "use core::ffi::c_char;");
     let mem = format!(

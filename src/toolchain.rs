@@ -66,7 +66,9 @@ impl Toolchain {
     }
 
     /// Build (once per compiler release) a sysroot that contains only
-    /// `core`, `alloc` and `compiler_builtins` for the host. Compiling against
+    /// `core`, `alloc` and `compiler_builtins` for the host (plus, on older
+    /// compilers, `rustc_std_workspace_core`, a re-export of core that
+    /// compiler_builtins depends on). Compiling against
     /// it makes any use of `std` a hard error, exactly like a real bare-metal
     /// target, while still producing host code we can run.
     pub fn core_sysroot(&self, cache: &Path) -> Result<PathBuf, String> {
@@ -83,7 +85,7 @@ impl Toolchain {
         let mut found = 0;
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let wanted = ["libcore-", "liballoc-", "libcompiler_builtins-"].iter().any(|p| name.starts_with(p))
+            let wanted = ["libcore-", "liballoc-", "libcompiler_builtins-", "librustc_std_workspace_core-"].iter().any(|p| name.starts_with(p))
                 && (name.ends_with(".rlib") || name.ends_with(".rmeta"));
             if wanted {
                 link_or_copy(&entry.path(), &lib.join(&name))?;
@@ -129,12 +131,6 @@ impl Toolchain {
         }
         fs::write(&stamp, &self.version).map_err(|e| e.to_string())?;
         Ok(root)
-    }
-
-    /// Where rust-lld lives (used to link aarch64 binaries from other hosts).
-    pub fn rust_lld(&self) -> PathBuf {
-        let exe = if cfg!(windows) { "rust-lld.exe" } else { "rust-lld" };
-        self.sysroot.join("lib").join("rustlib").join(&self.host).join("bin").join(exe)
     }
 }
 

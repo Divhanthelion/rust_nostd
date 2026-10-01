@@ -128,6 +128,7 @@ pub fn run(cards: &[Card], st: &mut State, n: usize, topic: Option<&str>) {
         term::dim(&format!("{} cards · answer out loud or on paper, then reveal · y = knew it, n = review again, q = stop", chosen.len()))
     );
     let mut knew = 0;
+    let mut seen = 0;
     for (i, c) in chosen.iter().enumerate() {
         println!();
         let bx = st.drill.get(&c.id).copied().unwrap_or(1);
@@ -138,9 +139,10 @@ pub fn run(cards: &[Card], st: &mut State, n: usize, topic: Option<&str>) {
         if cmd == "q" {
             break;
         }
+        seen += 1;
         print!("{}", markdown::render(&c.answer, width - 2));
         let verdict = loop {
-            let Some(v) = term::prompt(&format!("  {} ", term::dim("knew it? [y/n/q] ›"))) else { return finish(st, knew, i + 1) };
+            let Some(v) = term::prompt(&format!("  {} ", term::dim("knew it? [y/n/q] ›"))) else { return finish(st, knew, seen - 1) };
             match v.as_str() {
                 "y" | "Y" | "yes" => break Some(true),
                 "n" | "N" | "no" => break Some(false),
@@ -156,10 +158,10 @@ pub fn run(cards: &[Card], st: &mut State, n: usize, topic: Option<&str>) {
             Some(false) => {
                 st.drill.insert(c.id.clone(), 1);
             }
-            None => return finish(st, knew, i),
+            None => return finish(st, knew, seen - 1),
         }
     }
-    finish(st, knew, chosen.len());
+    finish(st, knew, seen);
 }
 
 fn finish(st: &mut State, knew: usize, seen: usize) {

@@ -4,6 +4,7 @@
 pub struct Section {
     pub name: String,
     pub kind: u32,
+    pub flags: u64,
     pub addr: u64,
     pub offset: u64,
     pub size: u64,
@@ -12,7 +13,6 @@ pub struct Section {
 pub struct Symbol {
     pub name: String,
     pub value: u64,
-    pub size: u64,
 }
 
 pub struct Elf {
@@ -26,6 +26,7 @@ pub struct Elf {
 
 pub const SHT_SYMTAB: u32 = 2;
 pub const SHT_NOBITS: u32 = 8;
+pub const SHF_ALLOC: u64 = 0x2;
 pub const EM_ARM: u16 = 40;
 
 fn rd<const N: usize>(d: &[u8], off: usize) -> Result<[u8; N], String> {
@@ -79,6 +80,7 @@ impl Elf {
         struct Raw {
             name: u32,
             kind: u32,
+            flags: u64,
             addr: u64,
             offset: u64,
             size: u64,
@@ -91,6 +93,7 @@ impl Elf {
                 Raw {
                     name: u32_at(&data, b)?,
                     kind: u32_at(&data, b + 4)?,
+                    flags: u64_at(&data, b + 8)?,
                     addr: u64_at(&data, b + 16)?,
                     offset: u64_at(&data, b + 24)?,
                     size: u64_at(&data, b + 32)?,
@@ -100,6 +103,7 @@ impl Elf {
                 Raw {
                     name: u32_at(&data, b)?,
                     kind: u32_at(&data, b + 4)?,
+                    flags: u64::from(u32_at(&data, b + 8)?),
                     addr: u64::from(u32_at(&data, b + 12)?),
                     offset: u64::from(u32_at(&data, b + 16)?),
                     size: u64::from(u32_at(&data, b + 20)?),
@@ -114,6 +118,7 @@ impl Elf {
             .map(|r| Section {
                 name: cstr_at(&data, shstr_off + r.name as usize),
                 kind: r.kind,
+                flags: r.flags,
                 addr: r.addr,
                 offset: r.offset,
                 size: r.size,
@@ -126,17 +131,35 @@ impl Elf {
             let count = r.size as usize / entsize;
             for i in 0..count {
                 let b = r.offset as usize + i * entsize;
-                let (name, value, size) = if is64 {
-                    (u32_at(&data, b)?, u64_at(&data, b + 8)?, u64_at(&data, b + 16)?)
+                let (name, value) = if is64 {
+                    (u32_at(&data, b)?, u64_at(&data, b + 8)?)
                 } else {
-                    (u32_at(&data, b)?, u64::from(u32_at(&data, b + 4)?), u64::from(u32_at(&data, b + 8)?))
+                    (u32_at(&data, b)?, u64::from(u32_at(&data, b + 4)?))
                 };
                 if name != 0 {
-                    symbols.push(Symbol { name: cstr_at(&data, strtab + name as usize), value, size });
+                    symbols.push(Symbol { name: cstr_at(&data, strtab + name as usize), value });
                 }
             }
         }
         Ok(Elf { is64, machine, entry, sections, symbols, data })
+    }
+
+    /// (flash bytes, RAM bytes) of the loaded image, given RAM's base
+    /// address: like `cargo size`. `.data` counts towards both.
+    pub fn memory_usage(&self, ram_base: u64) -> (u64, u64) {
+        let mut flash = 0;
+        let mut ram = 0;
+        for s in self.sections.iter().filter(|s| s.flags & SHF_ALLOC != 0) {
+            if s.addr >= ram_base {
+                ram += s.size;
+                if s.kind != SHT_NOBITS {
+                    flash += s.size; // initial values stored in flash
+                }
+            } else if s.kind != SHT_NOBITS {
+                flash += s.size;
+            }
+        }
+        (flash, ram)
     }
 
     pub fn section(&self, name: &str) -> Option<&Section> {

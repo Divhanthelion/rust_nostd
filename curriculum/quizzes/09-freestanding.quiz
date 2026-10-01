@@ -1,0 +1,69 @@
+? In a libc-free Linux program, what does `#![no_main]` do?
+- Removes the need for a panic handler
+* Stops rustc from generating the usual `main` entry shim, so you provide the real entry point yourself
+- Makes the program a library
+- Disables the `main` function name
+> With no C runtime (crt0) to call a Rust `main`, you define `_start` (Linux) or a reset handler (MCU) and take it from there.
+
+? Why does `_start` in this course start with a few lines of `global_asm!` instead of being a Rust function?
+- Rust can't define functions named `_start`
+* The kernel *jumps* to `_start` with a 16-byte-aligned stack, while Rust functions expect to be *called* (return address pushed), so the stack must be adjusted before entering Rust code
+- Inline assembly is faster
+- Rust functions can't read the stack pointer
+> Misaligned stacks can crash code that uses aligned SIMD stores. A naked function (Rust 1.88+) is an alternative.
+
+? On x86_64 Linux, where does the system-call number go?
+* `rax`
+- `rdi`
+- `r10`
+- On the stack
+> Arguments go in rdi, rsi, rdx, r10, r8, r9; the result comes back in rax; `syscall` clobbers rcx and r11.
+
+? Your freestanding program fails to link with `undefined symbol: memcpy`. Why?
+- You forgot `extern crate alloc`
+* The compiler emits calls to memcpy for copies, and normally libc provides it; without libc you must define it (bare-metal targets get it from compiler_builtins)
+- memcpy is a std-only function
+- The panic handler is missing
+> memcpy, memmove, memset, memcmp and bcmp are part of the implicit platform contract that rustc/LLVM rely on.
+
+? What does `#![no_builtins]` protect against in a crate that defines `memcpy`?
+- Linking against libc by accident
+* LLVM turning your byte loops back into calls to memcpy/memset, which could make them call themselves
+- The use of compiler intrinsics like `core::intrinsics`
+- Duplicate symbol errors
+> The loop-idiom optimisation is disabled for the whole crate. Without it you can get infinite recursion in the very functions meant to implement the idiom.
+
+? `write(1, buf, 100)` returns 37. What should a robust `write_all` do?
+- Report an error: the write failed
+* Loop and write the remaining 63 bytes
+- Return Ok: 37 > 0 means success
+- Retry the full 100 bytes
+> Short writes are legal. Loop until everything is written, retrying on EINTR (-4) and failing on other negative results.
+
+? Where are argc and argv when `_start` runs on Linux?
+- In registers rdi and rsi
+* On the stack: `argc` at the stack pointer, followed by the argv pointers, a NULL, then envp
+- In a global variable set by the kernel
+- They aren't available without libc
+> The System V ABI defines the initial process stack layout; libc's `_start` reads it and passes argc/argv to main.
+
+? Why does `CStr::from_ptr` cause a link error in a libc-free binary?
+- CStr requires alloc
+* It calls the C function `strlen` to find the terminating NUL
+- CStr is only defined in std
+- It needs the dynamic loader
+> Provide `strlen` (or scan for the NUL yourself).
+
+? What is `nostd_rt` (and `cortex-m-rt` on microcontrollers)?
+- A replacement for the Rust compiler
+- A heap allocator
+* A runtime crate that owns the entry point, sets up the environment, provides required symbols, and calls your `main` (registered via a macro/attribute)
+- A logging framework
+> Packaging the startup code into a crate lets applications focus on logic, and the entry macro type-checks main's signature.
+
+? Why must your panic handler in a freestanding program avoid anything that can panic (like `unwrap`)?
+- It would print twice
+* A panic inside the panic handler recurses and can overflow the stack or hang
+- `unwrap` doesn't exist in no_std
+- It would unwind into `_start`
+> Keep handlers trivially simple: ignore write errors (`let _ = write!(...)`), then exit or reset.

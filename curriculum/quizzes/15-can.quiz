@@ -1,0 +1,69 @@
+? Two nodes start transmitting at the same time with IDs 0x101 and 0x100. What happens?
+- Both frames collide and are retransmitted later
+* 0x100 wins arbitration: at the first differing bit its dominant 0 overrides the other's recessive 1, and 0x101 backs off
+- 0x101 wins because higher IDs have higher priority
+- The bus enters an error state
+> Arbitration is bitwise and non-destructive: the lowest identifier wins without corrupting the winning frame.
+
+? What is the valid range of an extended (29-bit) CAN identifier?
+- 0..=0x7FF
+- 0..=0xFFFF_FFFF
+* 0..=0x1FFF_FFFF
+- 0..=0x3FFFF
+> Standard IDs are 11 bits (0x7FF max), extended 29 bits.
+
+? A CAN FD frame needs to carry 20 bytes. Which DLC is used?
+- 20
+- 15
+* 11
+- CAN FD can't carry 20 bytes
+> DLC 9..=15 map to 12, 16, 20, 24, 32, 48, 64 bytes: 20 is DLC 11.
+
+? A DBC signal `16|16@1+` (Intel) is in a frame `[.., .., 0x34, 0x12, ..]` (bytes 2 and 3). Its raw value is:
+* 0x1234
+- 0x3412
+- 0x0034
+- 0x1200
+> Intel signals start at the LSB: byte 2 is the low byte, byte 3 the high byte.
+
+? For a Motorola (big-endian) DBC signal, what does the start bit denote?
+- The least significant bit
+* The most significant bit
+- The first byte
+- The bit closest to the end of the frame
+> And the walk continues downward within a byte, then to bit 7 of the next byte.
+
+? How does `embedded-can` make invalid identifiers impossible to pass around?
+- It panics when an ID is out of range
+- It masks out-of-range bits silently
+* Constructors like `StandardId::new(raw)` return `Option`, so a `StandardId` value is always valid
+- It stores IDs as strings
+> "Parse, don't validate": once you hold the type, the invariant holds.
+
+? In ISO-TP, what does the receiver send after a First Frame?
+- An acknowledgement of each byte
+* A Flow Control frame (e.g. `30 00 00`: continue to send, no block limit, no minimum separation time)
+- The first Consecutive Frame
+- Nothing: the sender streams immediately
+> Flow control lets the receiver pace the sender and reject messages it can't buffer.
+
+? ISO-TP consecutive frames are numbered with a 4-bit sequence number. What follows 15?
+- 16
+- 1
+* 0
+- The transfer must end at 15 frames
+> Sequence numbers wrap 1, 2, …, 15, 0, 1, …; checking them detects lost or reordered frames.
+
+? In SAE J1939, how is a PDU1 (destination-specific) message recognised?
+* The PDU format byte (PF) is below 240, and the PDU specific byte holds the destination address
+- The priority is 0
+- The source address is 0xFF
+- The ID is 11 bits
+> For PF >= 240 (PDU2) the PS byte is a group extension and the message is broadcast.
+
+? Why is an ISO-TP/UDS parser a security-relevant component?
+- It runs with interrupts disabled
+* It parses attacker-reachable length fields; mistakes like trusting a 12-bit length without a buffer check lead to memory corruption in C
+- It contains cryptographic keys
+- It is always written in assembly
+> ISO/SAE 21434 treats in-vehicle networks as an attack surface. Bounds-checked, panic-free Rust parsers remove a whole bug class.

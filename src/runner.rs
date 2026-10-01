@@ -219,6 +219,7 @@ fn bin_codegen_flags(c: &mut Command) {
         "-C", "opt-level=s",
         "-C", "overflow-checks=on",
         "-C", "debuginfo=0",
+        "-C", "strip=debuginfo",
         "-C", "relocation-model=static",
     ]);
 }
@@ -373,7 +374,7 @@ fn check_lib(ctx: &Ctx, ex: &Exercise, rel: &Path, sets: &[&[&str]], log: &mut L
             return Verdict::Fail;
         }
         let mut c = Command::new(&test_bin);
-        c.current_dir(&ctx.ws.root);
+        c.current_dir(&ctx.ws.root).env("RUST_BACKTRACE", "0");
         if term::color_enabled() {
             c.arg("--color=always");
         }
@@ -490,8 +491,13 @@ fn trim_test_output(out: &str) -> String {
     s
 }
 
-fn show_case(case: &Case) -> String {
-    let mut s = String::from("$ ./program");
+fn show_case(name: &str, case: &Case) -> String {
+    let mut s = String::from("$ ");
+    for (k, v) in case.env {
+        s.push_str(&format!("{k}={v:?} "));
+    }
+    s.push_str("./");
+    s.push_str(name);
     for a in case.args {
         if a.contains(' ') || a.is_empty() {
             s.push_str(&format!(" '{a}'"));
@@ -510,11 +516,15 @@ fn show_case(case: &Case) -> String {
 
 fn run_cases(ctx: &Ctx, prog: &Path, cases: &[Case], log: &mut Log, n: &mut usize, total: usize) -> bool {
     let mut all_ok = true;
+    let name = prog.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     for case in cases {
         *n += 1;
         stage_start(log, *n, total, &format!("run case {}", *n - (total - cases.len())));
         let mut c = Command::new(prog);
-        c.current_dir(&ctx.ws.root).args(case.args);
+        c.current_dir(&ctx.ws.root).args(case.args).env_remove("NOSTD_GREETING");
+        for (k, v) in case.env {
+            c.env(k, v);
+        }
         let ran = match run_with_timeout(&mut c, Some(case.stdin.as_bytes()), Duration::from_secs(10)) {
             Ok(r) => r,
             Err(e) => {
@@ -541,11 +551,11 @@ fn run_cases(ctx: &Ctx, prog: &Path, cases: &[Case], log: &mut Log, n: &mut usiz
         }
         if problems.is_empty() {
             stage_ok(log, "");
-            log.line(&format!("        {}", term::dim(&show_case(case))));
+            log.line(&format!("        {}", term::dim(&show_case(&name, case))));
         } else {
             all_ok = false;
             stage_fail(log, "");
-            log.line(&format!("    {}", term::bold(&show_case(case))));
+            log.line(&format!("    {}", term::bold(&show_case(&name, case))));
             for p in problems {
                 log.line(&format!("    {} {}", term::red("✗"), p));
             }
@@ -759,7 +769,7 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
         explain(log, &r.stderr_text());
         return Verdict::Fail;
     }
-    stage_ok(log, &format!("{} bytes", fs::metadata(&elf_path).map(|m| m.len()).unwrap_or(0)));
+    stage_ok(log, "");
 
     n += 1;
     stage_start(log, n, total, "inspect vector table & entry point");
@@ -780,7 +790,8 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
     }
     let sp = elf.read_u32(0).unwrap_or(0);
     let reset = elf.read_u32(4).unwrap_or(0);
-    stage_ok(log, &format!("SP={sp:#010x} Reset={reset:#010x}"));
+    let (flash, ram) = elf.memory_usage(0x2000_0000);
+    stage_ok(log, &format!("SP={sp:#010x} Reset={reset:#010x} · flash {flash} B, static RAM {ram} B"));
 
     let Some(qemu) = qemu else {
         log.line(&term::yellow(
@@ -791,9 +802,11 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
     n += 1;
     stage_start(log, n, total, "boot in QEMU (lm3s6965evb, Cortex-M3)");
     let mut c = Command::new(qemu);
+    // Route semihosting output to stdout through a chardev (by default it
+    // goes to stderr, mixed with QEMU's own messages).
     c.args([
         "-cpu", "cortex-m3", "-machine", "lm3s6965evb", "-nographic", "-monitor", "none", "-serial", "none",
-        "-semihosting-config", "enable=on,target=native", "-kernel",
+        "-chardev", "stdio,id=semihost", "-semihosting-config", "enable=on,target=native,chardev=semihost", "-kernel",
     ])
     .arg(&elf_path);
     let r = match run_with_timeout(&mut c, None, Duration::from_secs(10)) {
@@ -926,6 +939,10 @@ const EXPLAINERS: &[Explainer] = &[
     Explainer {
         needles: &["undefined symbol: strlen", "undefined reference to `strlen'"],
         text: "CStr::from_ptr calls the C function strlen to find the terminating NUL. Without libc you must provide `strlen` yourself (or scan for the 0 byte manually).",
+    },
+    Explainer {
+        needles: &["undefined reference to `nostd_", "undefined symbol: nostd_", "undefined reference to `rust_", "undefined symbol: rust_poll", "undefined symbol: _nostd_", "undefined symbol: _rust_"],
+        text: "The C program calls a function your Rust library doesn't export. An exported function needs `#[unsafe(no_mangle)]` (or the name gets mangled), `pub`, `extern \"C\"`, and exactly the name the C side declares.",
     },
     Explainer {
         needles: &["undefined symbol: _start", "cannot find entry symbol _start", "entry symbol _start"],

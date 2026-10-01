@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::curriculum::{self, Exercise, Mode, Module, Step, MODULES};
+use crate::curriculum::{self, Exercise, Module, Step, MODULES};
 use crate::drill;
 use crate::markdown;
 use crate::quiz;
@@ -698,12 +698,3 @@ pub fn help(cmd: Option<&str>) {
     }
 }
 
-/// Exercises in this mode need extra tools; used by the doctor and verify.
-pub fn needs(ex: &Exercise) -> &'static str {
-    match ex.mode {
-        Mode::Lib | Mode::LibFeatures(_) => "rustc",
-        Mode::Bin { .. } => "Linux x86_64/aarch64",
-        Mode::CLib { .. } => "a C compiler",
-        Mode::CortexM { .. } => "thumbv7m-none-eabi (+ QEMU)",
-    }
-}

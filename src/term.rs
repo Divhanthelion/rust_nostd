@@ -45,9 +45,6 @@ pub fn bold(s: &str) -> String {
 pub fn dim(s: &str) -> String {
     paint(s, "2")
 }
-pub fn italic(s: &str) -> String {
-    paint(s, "3")
-}
 pub fn red(s: &str) -> String {
     paint(s, "31")
 }
@@ -56,12 +53,6 @@ pub fn green(s: &str) -> String {
 }
 pub fn yellow(s: &str) -> String {
     paint(s, "33")
-}
-pub fn blue(s: &str) -> String {
-    paint(s, "34")
-}
-pub fn magenta(s: &str) -> String {
-    paint(s, "35")
 }
 pub fn cyan(s: &str) -> String {
     paint(s, "36")
@@ -247,10 +238,6 @@ pub fn pad(s: &str, w: usize) -> String {
     } else {
         format!("{s}{}", " ".repeat(w - vw))
     }
-}
-
-pub fn rule(w: usize) -> String {
-    dim(&"─".repeat(w))
 }
 
 /// Word-wrap plain text (no ANSI) to `width`, prefixing each line with `indent`.

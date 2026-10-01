@@ -1,0 +1,62 @@
+? What is the key difference between `const X: [u8; 4]` and `static X: [u8; 4]`?
+- `const` items live in RAM, `static` items in flash
+* A `static` is one object at one fixed address; a `const` is a value copied into each place it's used
+- `const` can't be used in `const fn`
+- There is no difference after optimisation
+> Statics have a stable address and `'static` lifetime; consts are inlined values. Immutable statics usually end up in `.rodata` (flash on an MCU).
+
+? Why does `fn f() -> usize { unsafe { BUF.len() } }` (with `static mut BUF: [u8; 8]`) fail to compile in edition 2024?
+- `static mut` was removed from the language
+* It implicitly creates a shared reference to a mutable static, which edition 2024 rejects
+- `len()` is not available on arrays in no_std
+- `unsafe` blocks can't access statics
+> `static_mut_refs` is deny-by-default in edition 2024. Use `&raw const BUF` for a raw pointer, an atomic, or a Mutex-like wrapper instead.
+
+? Which is the safest way to keep a global event counter that interrupt handlers increment?
+* `static COUNT: AtomicU32` with `fetch_add`
+- `static mut COUNT: u32` with `COUNT += 1` in an unsafe block
+- A `const COUNT: Cell<u32>`
+- A `static COUNT: Cell<u32>`
+> Atomics are `Sync` and need no `unsafe`. `Cell` isn't `Sync` so it can't be in a static, and a `const` would be a fresh copy at each use.
+
+? In a `StackVec` built on `[MaybeUninit<T>; N]`, which operation is undefined behaviour?
+- Writing to slot `len` and then incrementing `len`
+* Calling `assume_init_read` on a slot that was never written
+- Never dropping the elements (leaking them)
+- Using `[const { MaybeUninit::uninit() }; N]` to create the array
+> Reading uninitialised memory as a `T` is UB. Leaking is safe (but usually a bug), and the inline-const array initialiser is the standard way to build the storage.
+
+? Why does `heapless::Vec::push` return `Result<(), T>` rather than `Result<(), Error>`?
+- Because `T` must implement `Error`
+* So the caller gets the value back when the vector is full and can decide what to do with it
+- For compatibility with `std::vec::Vec`
+- Because errors can't be used in no_std
+> Dropping the value silently would lose data (and might run side-effectful drop code). Returning it lets the caller retry, report or drop it explicitly.
+
+? What does the generation counter in a pool handle protect against?
+- Running out of slots
+- Memory fragmentation
+* Using a handle after its slot was freed and reused (stale handle / use-after-free)
+- Two threads allocating at once
+> When a slot is freed its generation changes, so old handles no longer match and lookups fail cleanly.
+
+? Why is recursion usually avoided in firmware?
+- Rust doesn't support recursion in no_std
+* Stack depth becomes data-dependent and hard to bound; overflow often corrupts memory silently
+- Recursive functions can't be inlined
+- It requires a heap
+> Without guard pages, a stack overflow overwrites `.bss`/`.data`. MISRA C Rule 17.2 bans recursion for this reason.
+
+? Which code runs at compile time?
+- `static T: [u8; 256] = make_table();` where `make_table` is a normal `fn`
+* `static T: [u8; 256] = make_table();` where `make_table` is a `const fn`
+- Any function called from `main`
+- Code inside a `while` loop
+> Static initialisers must be constant expressions, so they can only call `const fn`s, which the compiler evaluates during compilation.
+
+? What does a ring buffer's `push` typically do when full (in a "keep the latest N" design)?
+- Panics
+- Grows the buffer
+* Overwrites the oldest element (optionally returning it)
+- Blocks until space is available
+> For sample histories and logs you usually want the most recent data. Queues between producer and consumer instead reject the new item (`Err(item)`).

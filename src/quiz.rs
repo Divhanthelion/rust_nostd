@@ -161,8 +161,8 @@ pub fn run(title: &str, questions: &[Question]) -> Option<(usize, usize)> {
         let letters = "abcdefgh";
         for (k, &oi) in order.iter().enumerate() {
             let letter = &letters[k..k + 1];
-            let text = markdown::inline(&q.options[oi].0);
-            println!("     {} {}", term::bold(&format!("{letter})")), text);
+            let first = format!("     {} ", term::bold(&format!("{letter})")));
+            print!("{}", markdown::wrap(&q.options[oi].0, width, &first, "        "));
         }
         let right_k = order.iter().position(|&oi| q.options[oi].1).unwrap_or(0);
         let answer = loop {
