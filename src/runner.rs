@@ -938,6 +938,10 @@ const EXPLAINERS: &[Explainer] = &[
         text: "CStr::from_ptr calls the C function strlen to find the terminating NUL. Without libc you must provide `strlen` yourself (or scan for the 0 byte manually).",
     },
     Explainer {
+        needles: &["undefined reference to `nostd_", "undefined symbol: nostd_", "undefined reference to `rust_", "undefined symbol: rust_poll", "undefined symbol: _nostd_", "undefined symbol: _rust_"],
+        text: "The C program calls a function your Rust library doesn't export. An exported function needs `#[unsafe(no_mangle)]` (or the name gets mangled), `pub`, `extern \"C\"`, and exactly the name the C side declares.",
+    },
+    Explainer {
         needles: &["undefined symbol: _start", "cannot find entry symbol _start", "entry symbol _start"],
         text: "Without crt0 (-nostartfiles), nothing defines the ELF entry point. Define `_start` yourself: the kernel jumps there with the stack pointer at argc.",
     },

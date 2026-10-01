@@ -1,0 +1,62 @@
+? Which attribute combination exports a Rust function to C as `int32_t checksum(const uint8_t*, size_t)`?
+- `pub fn checksum(data: &[u8]) -> i32`
+* `#[unsafe(no_mangle)] pub extern "C" fn checksum(data: *const u8, len: usize) -> i32`
+- `#[export] fn checksum(data: *const u8, len: usize) -> i32`
+- `extern "Rust" fn checksum(data: &[u8]) -> i32`
+> `extern "C"` picks the C calling convention; `no_mangle` keeps the symbol name; slices don't exist in C, so pass pointer + length.
+
+? Why should an exported function take `*const u8` rather than `&u8` for a C pointer argument?
+* C may pass NULL (or anything), and a Rust reference must never be null or dangling; the function must validate first
+- References are slower
+- `&u8` isn't FFI-safe on 64-bit targets
+- Because of the borrow checker
+> Creating an invalid reference is immediate UB. Take raw pointers at the boundary, check them, then convert.
+
+? How is a nullable C function pointer `void (*cb)(void*)` represented in Rust?
+- `*const fn(*mut c_void)`
+* `Option<unsafe extern "C" fn(*mut c_void)>`
+- `&dyn Fn(*mut c_void)`
+- `Box<dyn FnMut(*mut c_void)>`
+> Rust guarantees `Option<fn>` has the same representation as a nullable function pointer, with `None` as NULL.
+
+? A no_std crate is built as a `staticlib` and linked into a C program. Which crate must provide the `#[panic_handler]`?
+- The C program
+- No one: staticlibs can't panic
+* The staticlib itself, because it is the final Rust artifact
+- `core`
+> Any final artifact of Rust code needs exactly one panic handler. Calling C's `abort()` from it is a common choice when the host is a C program.
+
+? What happens since Rust 1.81 if a panic tries to unwind out of an `extern "C"` function?
+- It unwinds into C, which is undefined behaviour
+* The process aborts
+- The panic is silently swallowed
+- It compiles only with `extern "C-unwind"`
+> Unwinding across a C frame is UB, so Rust aborts instead. `extern "C-unwind"` explicitly opts into unwinding.
+
+? In edition 2024, what does `safe fn c_millis() -> u32;` inside an `unsafe extern "C"` block mean?
+- The C function is checked by the compiler for safety
+* You assert that calling it can never cause UB, so callers don't need an `unsafe` block
+- It may only be called from safe code
+- It is a Rust function exported to C
+> The `unsafe extern` block makes declaring foreign items an explicit promise; `safe` marks items whose calls need no further justification.
+
+? You need a `&CStr` for a fixed message to pass to C. What's the simplest no-heap way?
+- `CString::new("hello")`
+* `c"hello"`
+- `"hello".as_ptr()`
+- `b"hello"`
+> C-string literals (Rust 1.77) produce `&'static CStr` with the NUL included. `"hello".as_ptr()` is not NUL-terminated.
+
+? C code wants to keep a Rust object without Rust allocating. What pattern fits?
+- Return a `Box<T>` to C
+- Return `&'static mut T` from a `static mut`
+* Export the type's size and alignment; C provides storage, Rust initialises the object in place and returns an opaque pointer
+- Copy the whole struct to C on every call
+> Common in embedded C APIs. Validate null, size and alignment before writing into the storage.
+
+? Which tool generates C headers from a Rust crate's exported items?
+* cbindgen
+- bindgen
+- cargo-c
+- rustdoc
+> cbindgen writes headers for Rust APIs; bindgen goes the other way (Rust declarations from C headers).
