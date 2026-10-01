@@ -801,9 +801,11 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
     n += 1;
     stage_start(log, n, total, "boot in QEMU (lm3s6965evb, Cortex-M3)");
     let mut c = Command::new(qemu);
+    // Route semihosting output to stdout through a chardev (by default it
+    // goes to stderr, mixed with QEMU's own messages).
     c.args([
         "-cpu", "cortex-m3", "-machine", "lm3s6965evb", "-nographic", "-monitor", "none", "-serial", "none",
-        "-semihosting-config", "enable=on,target=native", "-kernel",
+        "-chardev", "stdio,id=semihost", "-semihosting-config", "enable=on,target=native,chardev=semihost", "-kernel",
     ])
     .arg(&elf_path);
     let r = match run_with_timeout(&mut c, None, Duration::from_secs(10)) {

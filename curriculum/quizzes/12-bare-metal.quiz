@@ -1,0 +1,69 @@
+? What does a Cortex-M do in hardware immediately after reset?
+- Jumps to address 0 and executes the code there
+* Loads the initial stack pointer from word 0 and the reset handler address from word 1 of the vector table, then jumps to the handler
+- Copies .data to RAM and zeroes .bss
+- Calls `main`
+> Everything else (memory initialisation, clocks, calling main) is software: the reset handler.
+
+? Why must every handler address in a Cortex-M vector table have bit 0 set?
+- To mark the handler as enabled
+* Bit 0 is the Thumb bit; Cortex-M only executes Thumb code, and a vector with bit 0 clear causes a fault
+- To align handlers to 2 bytes
+- It marks the handler as high priority
+> The linker sets the bit automatically for Thumb function symbols, which is one reason to build vector tables from function pointers.
+
+? In a linker script, what does `.data : { ... } > RAM AT > FLASH` express?
+- .data is duplicated in RAM and flash at runtime
+* .data runs at a RAM address (VMA) but its initial contents are stored in flash (LMA), so startup code must copy them
+- .data is moved to flash after initialisation
+- The linker chooses RAM or flash depending on size
+> `LOADADDR(.data)` (often exported as `_sidata`) tells the reset handler where to copy from.
+
+? Why must the reset handler zero `.bss` on real hardware?
+- To erase secrets from the previous run
+* RAM powers up with arbitrary contents, but Rust assumes zero-initialised statics start at zero
+- Because the linker stores .bss compressed
+- It doesn't: hardware clears RAM on reset
+> Emulators often clear RAM, hiding the bug, so test on hardware or scribble RAM deliberately.
+
+? What is `KEEP(*(.vector_table.reset_vector))` for in a linker script?
+- It keeps the section writable
+* It stops `--gc-sections` from discarding the vector table, which nothing in the code references
+- It keeps the section at the end of flash
+- It prevents the section from being optimised by LLVM
+> Garbage collection removes unreferenced sections; the vector table is only "referenced" by the hardware.
+
+? With `cortex-m-rt`, what file do you usually write yourself?
+- link.x
+- device.x
+* memory.x
+- build.rs is always required
+> memory.x describes FLASH and RAM; cortex-m-rt's link.x includes it, and the PAC provides device.x with the interrupt vectors.
+
+? Why is semihosting unsuitable for production firmware?
+- It's too slow for production logging
+* The `bkpt` instruction halts or faults the core when no debugger is attached
+- It requires an operating system
+- It uses too much flash
+> Use RTT/defmt for development logging and remove semihosting from release builds.
+
+? A HardFault occurred. Where do you find the address of the faulting instruction?
+* In the stacked exception frame (the `pc` word, 7th of 8)
+- In register r0
+- At address 0x0000_0000
+- In the CFSR register
+> The CPU pushes r0-r3, r12, lr, pc and xPSR on exception entry. CFSR tells you *why* (e.g. PRECISERR, UNDEFINSTR).
+
+? On an MCU with ECC-protected RAM, why does the startup code write all of RAM before using it?
+- To test the RAM for defects
+* Reading never-written ECC RAM can produce ECC errors because the check bits are uninitialised
+- To speed up later accesses
+- To clear the stack for security
+> Initialising ECC RAM early (often in assembly) is standard on automotive MCUs such as S32K3 and AURIX.
+
+? Which statement about code that runs *before* `.data`/`.bss` initialisation is true?
+- It can safely use any static variable
+* It must not rely on statics' initial values, which is why cortex-m-rt performs the initialisation in assembly
+- It must be written in C
+- It runs with interrupts enabled
+> Rust's guarantees assume statics are initialised; the pre-init window is outside them.

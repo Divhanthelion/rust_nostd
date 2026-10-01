@@ -459,6 +459,28 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("11-ffi"),
     },
+    Module {
+        num: 12,
+        slug: "bare_metal",
+        title: "Bare Metal: Targets, Linkers & Boot",
+        summary: "targets, vector tables, linker scripts, reset handlers, semihosting and HardFaults",
+        lesson: lesson!("12-bare-metal"),
+        exercises: &[
+            ex!("12_bare_metal", "boot1", "Startup code and fault decoding, on the host", Mode::Lib, [
+                r#"init_memory: validate everything *before* touching RAM. Order of checks: inverted ranges, RAM bounds, flash bounds (`flash.get(sidata..sidata.checked_add(n)?)`), then overlap."#,
+                r#"Two non-empty ranges [a, b) and [c, d) overlap exactly when `a < d && c < b`. Then `copy_from_slice` the image and `fill(0)` the bss range."#,
+                r#"vector_table: `stack_top % 8 != 0` → error. Word i+2 comes from handlers[i]; check `RESERVED.contains(&word)` first, then `h.unwrap_or(default) | 1`."#,
+                r#"decode_ipsr: `match (ipsr & 0x1FF) as u16 { 0 => ThreadMode, 2 => Nmi, ..., n @ 16.. => Irq(n - 16), n => Reserved(n) }`. parse_frame: `*stack.first_chunk::<8>()?` destructures into eight words. fault_reasons: filter CFSR_BITS by `cfsr & (1 << bit) != 0` and zip into `out`."#,
+            ]),
+            ex!("12_bare_metal", "cortexm1", "Boot a Cortex-M from reset, by hand", Mode::CortexM { link: "cortexm1.x", stdout: "Hello from Cortex-M3!\n.data ok: 0xc0ffee\n.bss ok: 0x0\n" }, [
+                r#"Reset vector: `#[unsafe(link_section = ".vector_table.reset_vector")] #[unsafe(no_mangle)] pub static __RESET_VECTOR: unsafe extern "C" fn() -> ! = Reset;`"#,
+                r#"Exceptions: `#[unsafe(link_section = ".vector_table.exceptions")] #[unsafe(no_mangle)] pub static __EXCEPTIONS: [Vector; 14] = [ ... ];` Index 0 is word 2 (NMI), index 1 is word 3 (HardFault); reserved words 7-10 and 13 are indices 5-8 and 11: `Vector { reserved: 0 }`."#,
+                r#"Zero .bss: `let mut dst = &raw mut _sbss; while dst < &raw mut _ebss { ptr::write_volatile(dst, 0); dst = dst.add(1); }`, all in one unsafe block."#,
+                r#"Copy .data: walk `dst` from `&raw mut _sdata` to `&raw mut _edata` and `src` from `&raw const _sidata`, `ptr::write_volatile(dst, ptr::read(src))`. Handlers: `semihosting::write_str("HardFault!\n"); semihosting::exit(false)`."#,
+            ], extra: [("cortexm1.x")]),
+        ],
+        quiz: quiz!("12-bare-metal"),
+    },
 ];
 
 #[allow(dead_code)]
