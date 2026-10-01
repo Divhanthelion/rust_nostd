@@ -1,0 +1,63 @@
+? A function must return a variable number of parsed values without a heap. Which design is idiomatic no_std Rust?
+- Return a `Vec<u32>` and require the caller to enable `alloc`
+* Take `out: &mut [u32]` from the caller and return how many slots were filled
+- Return a `[u32; 1024]` so there's always enough room
+- Use a `static mut` buffer and return a pointer into it
+> "The caller provides the storage" keeps the function allocation-free and lets the caller decide where memory lives. Returning huge arrays wastes stack, and a `static mut` buffer is not reentrant or thread/interrupt safe.
+
+? What is the type of `&array[2..5]` where `array: [u8; 8]`?
+- `[u8; 3]`
+- `&[u8; 3]`
+* `&[u8]`
+- `&[u8; 8]`
+> Range indexing produces a slice whose length is only known at runtime. Use `try_into()` or `split_first_chunk::<N>()` to get an array (reference) back.
+
+? Why can a large local array like `let buf = [0u8; 32 * 1024];` be dangerous on a microcontroller?
+- Arrays larger than 4 KiB don't compile for thumb targets
+* The stack is small and usually has no guard page, so overflow silently corrupts other memory
+- Large arrays are always heap allocated
+- It forces the use of `alloc`
+> MCU stacks are often a few KiB with no MMU to catch overflow. Large buffers go in `static`s or are passed in by the caller.
+
+? What does this match arm bind for `frame = [0x03, 1, 2]`?
+| [0x03, payload @ ..] => ...
+- `payload: [u8; 2]`
+* `payload: &[u8]` containing `[1, 2]`
+- `payload: u8` equal to 1
+- It doesn't match: `..` must be at the start
+> `name @ ..` binds the remaining elements as a subslice.
+
+? `s.len()` for `s = "Grüße"` returns:
+- 5
+* 7
+- 10
+- It depends on the platform
+> `len()` counts UTF-8 bytes. `ü` and `ß` are two bytes each: 1+2+1+2+1 = 7. Use `s.chars().count()` for characters.
+
+? Which conversion from received bytes to `&str` is allocation-free and safe?
+- `String::from_utf8(bytes.to_vec())`
+* `core::str::from_utf8(bytes)`
+- `unsafe { core::str::from_utf8_unchecked(bytes) }` (always fine for network data)
+- `bytes as &str`
+> `core::str::from_utf8` validates and borrows. The unchecked variant is UB if the bytes aren't UTF-8, which untrusted input may not be.
+
+? `u32::from_be_bytes([0x12, 0x34, 0x56, 0x78])` returns:
+* `0x12345678`
+- `0x78563412`
+- `0x34127856`
+- It depends on the CPU's endianness
+> `from_be_bytes` always interprets the array as big-endian regardless of the CPU. That's why it is the portable way to decode wire formats.
+
+? Why might firmware format integers by hand instead of using `write!(buf, "{}", n)`?
+- `write!` allocates
+- `core::fmt` is unavailable in no_std
+* `core::fmt` adds significant code size, which matters on small flash parts
+- Manual formatting is required by the borrow checker
+> `core::fmt` works in no_std without allocation, but its machinery can cost several KiB of flash. Hand-written conversion (or crates like `ufmt`/`defmt`) keeps binaries small.
+
+? What does `core::array::from_fn::<u32, 4, _>(|i| (i * 10) as u32)` produce?
+- A `Vec<u32>` with 4 elements
+* `[0, 10, 20, 30]`
+- An iterator over 4 elements
+- A compile error: from_fn needs alloc
+> `from_fn` calls the closure with each index and builds the array in place, on the stack. It's the no-heap substitute for `collect()` into a fixed size.

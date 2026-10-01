@@ -373,7 +373,7 @@ fn check_lib(ctx: &Ctx, ex: &Exercise, rel: &Path, sets: &[&[&str]], log: &mut L
             return Verdict::Fail;
         }
         let mut c = Command::new(&test_bin);
-        c.current_dir(&ctx.ws.root);
+        c.current_dir(&ctx.ws.root).env("RUST_BACKTRACE", "0");
         if term::color_enabled() {
             c.arg("--color=always");
         }
