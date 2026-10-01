@@ -13,7 +13,6 @@ pub struct Section {
 pub struct Symbol {
     pub name: String,
     pub value: u64,
-    pub size: u64,
 }
 
 pub struct Elf {
@@ -132,13 +131,13 @@ impl Elf {
             let count = r.size as usize / entsize;
             for i in 0..count {
                 let b = r.offset as usize + i * entsize;
-                let (name, value, size) = if is64 {
-                    (u32_at(&data, b)?, u64_at(&data, b + 8)?, u64_at(&data, b + 16)?)
+                let (name, value) = if is64 {
+                    (u32_at(&data, b)?, u64_at(&data, b + 8)?)
                 } else {
-                    (u32_at(&data, b)?, u64::from(u32_at(&data, b + 4)?), u64::from(u32_at(&data, b + 8)?))
+                    (u32_at(&data, b)?, u64::from(u32_at(&data, b + 4)?))
                 };
                 if name != 0 {
-                    symbols.push(Symbol { name: cstr_at(&data, strtab + name as usize), value, size });
+                    symbols.push(Symbol { name: cstr_at(&data, strtab + name as usize), value });
                 }
             }
         }

@@ -99,6 +99,8 @@ pub struct Case {
 }
 
 pub enum Expect {
+    /// Accept any output (for exercise authors; not used by the built-in course).
+    #[allow(dead_code)]
     Any,
     Exact(&'static str),
     Contains(&'static [&'static str]),

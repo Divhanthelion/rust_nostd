@@ -16,7 +16,7 @@ pub fn dev(args: &Args) -> Res {
     match args.pos(0) {
         Some("verify") => verify(args),
         Some("solve") => solve(args),
-        _ => Err("usage: nostd dev verify [EXERCISE...] [-j N] [--keep]\n       nostd dev solve EXERCISE   (write the solution into your workspace)".into()),
+        _ => Err("usage: nostd dev verify [EXERCISE...] [-j N] [--keep] [--strict]\n       nostd dev solve EXERCISE   (write the solution into your workspace)".into()),
     }
 }
 
@@ -127,6 +127,22 @@ fn verify_one(ctx: &Ctx, ex: &'static Exercise) -> Row {
 
 fn verify(args: &Args) -> Res {
     let tc = Toolchain::detect()?;
+    if args.flag(&["--strict"]) {
+        // CI mode: every optional tool must be present, so nothing is skipped silently.
+        let missing: Vec<&str> = [
+            ("freestanding Linux (x86_64/aarch64)", tc.can_run_freestanding()),
+            ("a C compiler", crate::toolchain::c_compiler().is_some()),
+            ("target thumbv7m-none-eabi", tc.has_target("thumbv7m-none-eabi")),
+            ("qemu-system-arm", crate::toolchain::which("qemu-system-arm").is_some()),
+        ]
+        .into_iter()
+        .filter(|(_, ok)| !ok)
+        .map(|(name, _)| name)
+        .collect();
+        if !missing.is_empty() {
+            return Err(format!("--strict: missing {}", missing.join(", ")));
+        }
+    }
     let dir = std::env::temp_dir().join(format!("nostd-verify-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, _) = Workspace::init(&dir, Some(&tc))?;
@@ -213,7 +229,7 @@ fn verify(args: &Args) -> Res {
     } else {
         println!("  kept {}", dir.display());
     }
-    if bad > 0 || !problems.is_empty() {
+    if bad > 0 || !problems.is_empty() || (blocked > 0 && args.flag(&["--strict"])) {
         Err(String::new())
     } else {
         Ok(())
