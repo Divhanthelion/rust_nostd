@@ -1,0 +1,21 @@
+[package]
+name = "nostd-tutor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "An interactive terminal course that teaches #![no_std] Rust, from core basics to bare metal and automotive patterns"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+include = ["src/**", "curriculum/**", "Cargo.toml", "README.md"]
+
+[[bin]]
+name = "nostd"
+path = "src/main.rs"
+
+# Deliberately zero dependencies: the tutor must build offline,
+# and it practises what it preaches about keeping dependency trees small.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1

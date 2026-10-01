@@ -1,0 +1,26 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Cortex-M3 firmware using the rust-embedded ecosystem"
+
+[dependencies]
+# Core peripherals (SysTick, NVIC, SCB...) and the single-core critical-section
+# implementation (disables interrupts).
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+# Vector table, Reset handler, #[entry] and #[exception]. Reads memory.x.
+cortex-m-rt = "0.7"
+# hprintln! and debug::exit over semihosting (development only).
+cortex-m-semihosting = "0.6"
+# Print the panic message over semihosting, then exit QEMU with an error.
+panic-semihosting = { version = "0.7", features = ["exit"] }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true

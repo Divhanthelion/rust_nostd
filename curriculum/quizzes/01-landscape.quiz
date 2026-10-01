@@ -1,0 +1,69 @@
+? What does `#![no_std]` do to a crate?
+- It removes the `core` library and leaves only the language
+* It stops the implicit `extern crate std`, links `core`, and switches to the core prelude
+- It disables heap allocation and panics at compile time
+- It changes code generation to target microcontrollers
+> `#![no_std]` changes what is linked and what is in scope: no `std` in the extern prelude, the core prelude instead of std's. It does not change code generation or remove language features.
+
+? Which of these is available in `core`, with no allocator and no OS?
+- `Vec<T>`
+- `HashMap<K, V>`
+* `core::fmt::Write` and the `write!` macro
+- `std::io::Write`
+> All formatting machinery lives in core. `Vec` needs alloc, `HashMap` is std-only, and `std::io` needs an OS.
+
+? Why is `HashMap` not available in `alloc`?
+- It is too large for embedded targets
+* Its default hasher (`RandomState`) needs randomness from the operating system
+- It uses threads internally
+- It requires floating point
+> HashDoS resistance requires random keys, which come from the OS. `BTreeMap` (in alloc) or `hashbrown`/`heapless` maps are the usual replacements.
+
+? You write a no_std *library* crate. Which of these should it define?
+- A `#[panic_handler]`
+- A `#[global_allocator]`
+- Both, so it can be used standalone
+* Neither: the final binary chooses its panic handler and allocator
+> Those are platform decisions. Exactly one panic handler and at most one global allocator may exist in the final link, so libraries must leave them to the binary.
+
+? A crate has `#![no_std]` and `extern crate alloc;`. Which import compiles?
+- `use std::vec::Vec;`
+* `use alloc::vec::Vec;`
+- `use core::vec::Vec;`
+- `use alloc::collections::HashMap;`
+> `Vec` lives in `alloc::vec`. `std::` doesn't resolve under no_std, there is no `core::vec`, and `HashMap` isn't in alloc.
+
+? What does `none` mean in the target triple `thumbv7em-none-eabihf`?
+- The target has no FPU
+* There is no operating system: the target ships only `core` and `alloc`
+- No vendor-specific extensions are enabled
+- The target does not support panics
+> The triple is arch-vendor-os-abi. `none` in the OS slot means bare metal. (`hf` means hard-float: this core *has* an FPU.)
+
+? Why is building your library with `cargo build --target thumbv7em-none-eabihf` a stronger no_std check than just writing `#![no_std]`?
+- Because the thumb target enables extra lints
+* Because a dependency might still pull in std; on a bare-metal target there is no std to link, so the build fails
+- Because `#![no_std]` is ignored on the host target
+- It isn't stronger; they are equivalent
+> `#![no_std]` only affects your crate. A dependency compiled with std (e.g. one missing `default-features = false`) silently drags std back in on the host, but can't on a target that has no std.
+
+? Which statement about tests in a no_std library is true?
+- Tests must also be no_std
+- You can't test no_std code without hardware
+* The `#[cfg(test)]` module can use `extern crate std;` because tests run on the host
+- You must use a custom test framework
+> The library stays no_std; the test build runs on your PC where std exists. This is the standard way to unit-test embedded logic.
+
+? In edition 2024, how must `#[no_mangle]` be written?
+- `#[no_mangle]` (unchanged)
+* `#[unsafe(no_mangle)]`
+- `#[export(no_mangle)]`
+- `unsafe #[no_mangle]`
+> Attributes that affect symbol names and linking can break soundness (e.g. clashing with another symbol), so edition 2024 requires the `unsafe(...)` wrapper.
+
+? Which of these needs `std` because it calls into a platform math library?
+- `i32::checked_add`
+- `f32::abs`
+* `f32::sqrt`
+- `u64::isqrt`
+> Most float math (sqrt, sin, powf, floor…) is std-only on stable. `abs`, `signum`, `copysign` moved to core; integer methods were always in core. Use `libm` or integer/fixed-point math in no_std.

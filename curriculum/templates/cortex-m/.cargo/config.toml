@@ -1,0 +1,8 @@
+[build]
+# Cross-compile by default: `cargo build` produces firmware, not a host binary.
+target = "thumbv7m-none-eabi"
+
+[target.thumbv7m-none-eabi]
+# `cargo run` boots the firmware in QEMU's LM3S6965 board (a Cortex-M3) with
+# semihosting, so the firmware can print to your terminal and exit.
+runner = "qemu-system-arm -cpu cortex-m3 -machine lm3s6965evb -nographic -semihosting-config enable=on,target=native -kernel"

@@ -1,0 +1,8 @@
+[package]
+name = "nostd_rt"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal Linux runtime: _start, syscalls, memcpy & co"
+
+[lib]
+path = "src/lib.rs"

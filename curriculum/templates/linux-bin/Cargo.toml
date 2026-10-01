@@ -1,0 +1,20 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A freestanding Linux program: no std, no libc, no crt0"
+
+[dependencies]
+nostd_rt = { path = "rt" }
+
+# no_std binaries cannot unwind: abort on panic in every profile.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"     # optimise for size
+lto = true
+codegen-units = 1
+strip = true

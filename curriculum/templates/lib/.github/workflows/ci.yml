@@ -1,0 +1,21 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf, thumbv6m-none-eabi, riscv32imac-unknown-none-elf
+          components: clippy
+      # Host tests in every feature combination.
+      - run: cargo test --no-default-features
+      - run: cargo test --features alloc
+      - run: cargo test --all-features
+      # The real no_std proof: these targets have no std at all.
+      - run: cargo build --no-default-features --target thumbv7em-none-eabihf
+      - run: cargo build --no-default-features --target thumbv6m-none-eabi
+      - run: cargo build --features alloc --target riscv32imac-unknown-none-elf
+      - run: cargo clippy --all-features -- -D warnings

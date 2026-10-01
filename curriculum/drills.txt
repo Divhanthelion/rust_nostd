@@ -1,0 +1,6 @@
+# Interview flashcards for no_std / embedded / automotive Rust.
+# Format: "## topic", then "Q:" and "A:" (answer continues on following lines).
+
+## fundamentals
+Q: What are the three layers of the Rust standard library, and what does each need?
+A: `core`: the language support library, needs nothing. `alloc`: heap types (Box, Vec, String, Rc, Arc, BTreeMap), needs a global allocator. `std`: OS services (files, threads, net, time, stdio) and re-exports of core/alloc, needs an operating system.

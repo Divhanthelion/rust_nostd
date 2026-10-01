@@ -1,0 +1,19 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Bare-metal Cortex-M3 firmware with zero dependencies"
+
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+opt-level = "s"     # debug builds of firmware are often too big/slow at opt-level 0
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true        # debug info never reaches flash; keep it for the debugger

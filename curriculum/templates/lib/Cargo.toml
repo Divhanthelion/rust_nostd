@@ -1,0 +1,31 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A portable no_std library"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+# Heap-backed helpers. The *final binary* must provide a #[global_allocator].
+alloc = []
+# std integrations (most things are in core now, e.g. core::error::Error).
+std = ["alloc"]
+
+[dependencies]
+# When you add dependencies, keep them no_std:
+#   heapless = { version = "0.9", default-features = false }
+# and forward features:   std = ["alloc", "some-dep/std"]
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+# Safety-oriented lints: make panics and silent truncation visible in review.
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+arithmetic_side_effects = "warn"
+cast_possible_truncation = "warn"

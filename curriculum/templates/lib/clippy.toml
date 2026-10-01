@@ -1,0 +1,4 @@
+# Tests may unwrap/index freely; production code may not.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
