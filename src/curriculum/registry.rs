@@ -534,6 +534,34 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("14-async"),
     },
+    Module {
+        num: 15,
+        slug: "can",
+        title: "Automotive I: CAN, Signals & ISO-TP",
+        summary: "CAN/CAN FD frames and arbitration, J1939, DBC signals, ISO-TP transport",
+        lesson: lesson!("15-can"),
+        exercises: &[
+            ex!("15_can", "can1", "CAN identifiers, frames, CAN FD and J1939", Mode::Lib, [
+                r#"Constructors: `if raw <= Self::MAX { Some(StandardId(raw)) } else { None }` (works in a const fn). standard_id: `StandardId((self.0 >> 18) as u16)`."#,
+                r#"Ord: map each Id to a tuple key `(base_11_bits, ide, low_18_bits)` with ide = 0 for standard and 1 for extended, then compare the tuples."#,
+                r#"Frame::new: `buf.get_mut(..data.len())?.copy_from_slice(data)` rejects more than 8 bytes for free. FD lengths: keep a 16-entry table `[0, 1, …, 8, 12, 16, 20, 24, 32, 48, 64]`; len→dlc is the first index whose length is >= len."#,
+                r#"J1939: priority = bits 28..26, EDP/DP = bits 25..24, PF = bits 23..16, PS = 15..8, SA = 7..0. If PF < 240, PS is the destination and not part of the PGN. Encode: check the PDU format against `destination` before assembling the bits."#,
+            ]),
+            ex!("15_can", "can2", "DBC signals, Intel and Motorola", Mode::Lib, [
+                r#"positions (MSB first): Intel → `start + len - 1` down to `start`. Motorola → start at `start_bit` and step with `if p % 8 == 0 { p + 15 } else { p - 1 }`. Then check every position is `< data_len * 8`."#,
+                r#"decode: for each position (MSB first), `bit = (data[p / 8] >> (p % 8)) & 1; v = (v << 1) | bit`. Sign-extend when signed: if bit len-1 is set, `v |= u64::MAX << len` (for len < 64)."#,
+                r#"encode: validate the range first (unsigned `0..=2^n-1`, signed `-2^(n-1)..=2^(n-1)-1`), then for position i (MSB first) take `(raw >> (n - 1 - i)) & 1` and set/clear that bit in `data[p / 8]`."#,
+                r#"to_physical_milli: `raw * self.factor_num * 1000 / self.factor_den + self.offset_milli`."#,
+            ]),
+            ex!("15_can", "isotp1", "ISO-TP segmentation and reassembly", Mode::Lib, [
+                r#"segment: messages of 1..=7 bytes are one Single Frame `[len, data..., PAD...]`. Longer: frame 0 is `[0x10 | len >> 8, len & 0xFF, msg[0..6]]`, frame k >= 1 starts at byte `6 + 7 * (k - 1)` with header `0x20 | (k & 0xF)`."#,
+                r#"on_frame: `let Some(&pci) = frame.first() else { return Err(InvalidFrame) };` then `match pci >> 4`. Track reception with `expected` (0 = idle), `received` and `next_seq`."#,
+                r#"Consecutive frames: check you're receiving, then the sequence number (reset to idle on mismatch), then copy `min(7, expected - received)` bytes with `frame.get(1..1 + n)`. Advance `next_seq = (next_seq + 1) & 0xF`."#,
+                r#"When `received == expected`, remember `complete = expected`, go idle and return `Complete`. A Single Frame also goes idle (aborting any reception) and sets `complete`."#,
+            ]),
+        ],
+        quiz: quiz!("15-can"),
+    },
 ];
 
 #[allow(dead_code)]
