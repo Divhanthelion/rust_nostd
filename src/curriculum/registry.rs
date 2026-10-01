@@ -270,6 +270,45 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("07-sync"),
     },
+    Module {
+        num: 8,
+        slug: "unsafe",
+        title: "Unsafe Rust, Raw Pointers & Hardware Registers",
+        summary: "safety contracts, raw pointers, volatile MMIO, layouts and type-state APIs",
+        lesson: lesson!("08-unsafe-mmio"),
+        exercises: &[
+            ex!("08_unsafe", "bits1", "Bit manipulation", Mode::Lib, [
+                r#"`1u32.checked_shl(n)` is `None` for n >= 32, so `1u32.checked_shl(n).unwrap_or(0)` is a mask that's simply empty for out-of-range bits. Then |, & !, ^ and & do the rest."#,
+                r#"field_mask: reject width 0 and `offset.checked_add(width)? > 32`. Build `width` ones (careful: `1 << 32` overflows, special-case width 32) and shift left by offset."#,
+                r#"insert: shift the value into place with `checked_shl`, and reject it if any shifted bit lands outside the mask (`shifted & !mask != 0`) or bits fell off the top (`shifted >> offset != value`)."#,
+                r#"sign_extend: shift the field to the top (`value << (32 - bits)`), reinterpret as i32, then arithmetic-shift back down: `((value << s) as i32) >> s`."#,
+            ]),
+            ex!("08_unsafe", "mmio1", "A volatile register driver", Mode::Lib, [
+                r#"Get a pointer to one register without creating a reference: `&raw mut (*self.regs).moder`. Read/write it with `core::ptr::read_volatile`/`write_volatile` inside an unsafe block."#,
+                r#"set_mode: read MODER, clear the two bits at `2 * pin` with `!(0b11 << (2 * p))`, OR in `(mode as u32) << (2 * p)`, write back."#,
+                r#"set_high writes `1 << p` to BSRR, set_low writes `1 << (p + 16)`. Never touch ODR in those two. is_high reads IDR."#,
+            ]),
+            ex!("08_unsafe", "repr1", "Wire formats, enums and layout attributes", Mode::Lib, [
+                r#"TryFrom: `match b { 0x01 => Ok(MsgType::Heartbeat), ..., other => Err(other) }`."#,
+                r#"parse: `bytes.split_first_chunk::<HEADER_LEN>().ok_or(ParseError::TooShort)?` gives `&[u8; 8]` plus the rest; index the array with constant indices (can't panic)."#,
+                r#"Use `u16::from_be_bytes([h[2], h[3]])` and `u32::from_le_bytes([h[4], h[5], h[6], h[7]])`. The payload is `rest.get(..length as usize)`, else Truncated."#,
+                r#"packed_length: a reference to a packed field is rejected. `{ h.length }` copies the value into an aligned temporary first."#,
+            ]),
+            ex!("08_unsafe", "typestate1", "Make illegal hardware states unrepresentable", Mode::Lib, [
+                r#"take(): `TAKEN.swap(true, Ordering::AcqRel)` returns the previous value: if it was already true, someone else owns the peripherals."#,
+                r#"split: build each `Pin { port: &*self, _mode: PhantomData }`. The const generic N and the mode come from the field types in `Pins`."#,
+                r#"into_mode: compute `shift = 2 * u32::from(N)`, update `moder` with the usual clear-then-set, and return `Pin { port: self.port, _mode: PhantomData }`: same pin, new type."#,
+                r#"The generic `pulse` needs `impl<const N: u8> OutputPin for Pin<'_, N, Output>` whose methods call the inherent ones (`Pin::set_high(self)`)."#,
+            ]),
+            ex!("08_unsafe", "unsafe1", "Sound abstractions over unsafe code", Mode::Lib, [
+                r#"Check every precondition with safe code first (bounds, alignment, lengths) and return None early. Only then enter `unsafe`."#,
+                r#"split_at_mut: `let p = s.as_mut_ptr();` then `slice::from_raw_parts_mut(p, mid)` and `slice::from_raw_parts_mut(p.add(mid), len - mid)`."#,
+                r#"read_u32_le: get the 4 bytes with `buf.get(offset..offset.checked_add(4)?)?`, then `ptr::read_unaligned(bytes.as_ptr().cast::<u32>())` and `u32::from_le`."#,
+                r#"as_u32_slice: `ptr.cast::<u32>().is_aligned()` and `len % 4 == 0`. zeroize: `ptr::write_volatile(b, 0)` for each byte, then `compiler_fence(Ordering::SeqCst)`. sum_raw: `unsafe { ptr.add(i).read() }` in the loop."#,
+            ]),
+        ],
+        quiz: quiz!("08-unsafe"),
+    },
 ];
 
 #[allow(dead_code)]
