@@ -219,6 +219,7 @@ fn bin_codegen_flags(c: &mut Command) {
         "-C", "opt-level=s",
         "-C", "overflow-checks=on",
         "-C", "debuginfo=0",
+        "-C", "strip=debuginfo",
         "-C", "relocation-model=static",
     ]);
 }
@@ -490,8 +491,13 @@ fn trim_test_output(out: &str) -> String {
     s
 }
 
-fn show_case(case: &Case) -> String {
-    let mut s = String::from("$ ./program");
+fn show_case(name: &str, case: &Case) -> String {
+    let mut s = String::from("$ ");
+    for (k, v) in case.env {
+        s.push_str(&format!("{k}={v:?} "));
+    }
+    s.push_str("./");
+    s.push_str(name);
     for a in case.args {
         if a.contains(' ') || a.is_empty() {
             s.push_str(&format!(" '{a}'"));
@@ -510,11 +516,15 @@ fn show_case(case: &Case) -> String {
 
 fn run_cases(ctx: &Ctx, prog: &Path, cases: &[Case], log: &mut Log, n: &mut usize, total: usize) -> bool {
     let mut all_ok = true;
+    let name = prog.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     for case in cases {
         *n += 1;
         stage_start(log, *n, total, &format!("run case {}", *n - (total - cases.len())));
         let mut c = Command::new(prog);
-        c.current_dir(&ctx.ws.root).args(case.args);
+        c.current_dir(&ctx.ws.root).args(case.args).env_remove("NOSTD_GREETING");
+        for (k, v) in case.env {
+            c.env(k, v);
+        }
         let ran = match run_with_timeout(&mut c, Some(case.stdin.as_bytes()), Duration::from_secs(10)) {
             Ok(r) => r,
             Err(e) => {
@@ -541,11 +551,11 @@ fn run_cases(ctx: &Ctx, prog: &Path, cases: &[Case], log: &mut Log, n: &mut usiz
         }
         if problems.is_empty() {
             stage_ok(log, "");
-            log.line(&format!("        {}", term::dim(&show_case(case))));
+            log.line(&format!("        {}", term::dim(&show_case(&name, case))));
         } else {
             all_ok = false;
             stage_fail(log, "");
-            log.line(&format!("    {}", term::bold(&show_case(case))));
+            log.line(&format!("    {}", term::bold(&show_case(&name, case))));
             for p in problems {
                 log.line(&format!("    {} {}", term::red("✗"), p));
             }

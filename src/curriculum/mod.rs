@@ -90,6 +90,8 @@ pub enum Mode {
 
 pub struct Case {
     pub args: &'static [&'static str],
+    /// Extra environment variables for the program.
+    pub env: &'static [(&'static str, &'static str)],
     pub stdin: &'static str,
     pub stdout: Expect,
     pub stderr: Expect,

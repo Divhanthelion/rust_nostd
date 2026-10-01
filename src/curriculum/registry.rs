@@ -31,8 +31,8 @@ macro_rules! ex {
 
 #[allow(unused_macros)]
 macro_rules! case {
-    (args: [$($a:literal),*], stdin: $stdin:expr, stdout: $out:expr, stderr: $err:expr, exit: $code:expr) => {
-        Case { args: &[$($a),*], stdin: $stdin, stdout: $out, stderr: $err, exit: $code }
+    (args: [$($a:literal),*], $(env: [$(($k:literal, $v:literal)),*],)? stdin: $stdin:expr, stdout: $out:expr, stderr: $err:expr, exit: $code:expr) => {
+        Case { args: &[$($a),*], env: &[$($(($k, $v)),*)?], stdin: $stdin, stdout: $out, stderr: $err, exit: $code }
     };
 }
 
@@ -308,6 +308,67 @@ pub static MODULES: &[Module] = &[
             ]),
         ],
         quiz: quiz!("08-unsafe"),
+    },
+    Module {
+        num: 9,
+        slug: "freestanding",
+        title: "Freestanding Linux Binaries",
+        summary: "_start, system calls, memcpy & co, println! and panic handlers with no libc",
+        lesson: lesson!("09-freestanding"),
+        exercises: &[
+            ex!("09_freestanding", "start1", "Life before main", Mode::Bin { rt: false, cases: &[
+                case!(args: [], stdin: "", stdout: Expect::Exact("Hello from _start!\n"), stderr: Expect::Exact(""), exit: 42),
+            ] }, [
+                r#"Right now `main` hits `todo!()`, the panic handler calls `sys_exit`, which is also `todo!()`... and so on until the stack overflows (SIGSEGV). Implement sys_exit first."#,
+                r#"x86_64 exit_group: `asm!("syscall", in("rax") 231usize, in("rdi") code as usize, options(noreturn, nostack))`. aarch64: `asm!("svc #0", in("x0") code as usize, in("x8") 94usize, options(noreturn, nostack))`."#,
+                r#"x86_64 write: `inlateout("rax") 1isize => ret`, `in("rdi") fd as usize`, `in("rsi") buf.as_ptr()`, `in("rdx") buf.len()`, plus `lateout("rcx") _, lateout("r11") _` because `syscall` clobbers them. aarch64: number 64 in x8, args in x0-x2, result in x0."#,
+                r#"main: `sys_write(1, b"Hello from _start!\n"); 42`"#,
+            ]),
+            ex!("09_freestanding", "rt1", "The platform contract (memcpy & co)", Mode::Bin { rt: false, cases: &[
+                case!(args: [], stdin: "", stdout: Expect::Exact("copy ok\nfill ok\nmove ok\ncompare ok\n"), stderr: Expect::Exact(""), exit: 0),
+            ] }, [
+                r#"Signatures: `#[unsafe(no_mangle)] pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: usize) -> *mut c_void`. memset takes `c: c_int`; memcmp/bcmp return `c_int`."#,
+                r#"Cast to bytes with `dest.cast::<u8>()` and copy in a `while i < n` loop with `*d.add(i) = *s.add(i)` inside `unsafe { }`. Return the original `dest`/`s` pointer."#,
+                r#"memmove must handle overlap: if dest is *after* src, copy backwards (from n-1 down to 0), otherwise forwards. That's what makes `copy_within` correct."#,
+                r#"memcmp: return `c_int::from(x) - c_int::from(y)` for the first differing pair (bytes compared as unsigned), else 0. bcmp can simply call memcmp."#,
+            ]),
+            ex!("09_freestanding", "print1", "println! from scratch", Mode::Bin { rt: false, cases: &[
+                case!(args: [], stdin: "", stdout: Expect::Exact("no newline yet, now there is.\nleft    |    42|  mid  |\n0xff 0b101 +7\nSome([1, 2, 3]) 3.14\n\n################################################################\n"), stderr: Expect::Exact("warning: 3 retries\n"), exit: 0),
+            ] }, [
+                r#"write_all: `while !buf.is_empty() { let n = sys_write(fd, buf); ... }`. On -4 `continue`; on n <= 0 return `Err(n)`; otherwise advance with `buf = &buf[n as usize..]` (or `.get(..)`)."#,
+                r#"Stdout's write_str: `write_all(1, s.as_bytes()).map_err(|_| fmt::Error)`."#,
+                r#"println!: two rules, `() => { print!("\n") };` and `($($arg:tt)*) => {{ let _ = Stdout.write_fmt(format_args!("{}\n", format_args!($($arg)*))); }};`. Nesting format_args! appends the newline without allocating."#,
+            ]),
+            ex!("09_freestanding", "panic1", "A panic handler worth having", Mode::Bin { rt: false, cases: &[
+                case!(args: [], stdin: "", stdout: Expect::Exact(""), stderr: Expect::Contains(&["PANIC [exercises/09_freestanding/panic1.rs:", "] index out of bounds: the len is 3 but the index is 7\n"]), exit: 101),
+                case!(args: ["one"], stdin: "", stdout: Expect::Exact(""), stderr: Expect::Contains(&["PANIC [exercises/09_freestanding/panic1.rs:", "] sensor 7 timed out\n"]), exit: 101),
+                case!(args: ["one", "two"], stdin: "", stdout: Expect::Exact("no panic\n"), stderr: Expect::Exact(""), exit: 0),
+            ] }, [
+                r#"`let mut err = Stderr;` then `match info.location() { Some(loc) => { let _ = write!(err, "PANIC [{}:{}] ", loc.file(), loc.line()); } None => ... }`."#,
+                r#"Finish with `let _ = writeln!(err, "{}", info.message());` and `sys_exit(101)`. `info.message()` is a `PanicMessage`, which implements Display."#,
+            ]),
+            ex!("09_freestanding", "args1", "Arguments and environment, straight off the stack", Mode::Bin { rt: false, cases: &[
+                case!(args: ["one", "two words"], env: [("NOSTD_GREETING", "hello")], stdin: "", stdout: Expect::Exact("argc=3\nargv[0]=args1\nargv[1]=one\nargv[2]=two words\ngreeting=hello\n"), stderr: Expect::Exact(""), exit: 0),
+                case!(args: [], stdin: "", stdout: Expect::Exact("argc=1\nargv[0]=args1\ngreeting=(unset)\n"), stderr: Expect::Exact(""), exit: 0),
+                case!(args: ["--x"], env: [("NOSTD_GREETING_EXTRA", "no"), ("XNOSTD_GREETING", "no")], stdin: "", stdout: Expect::Exact("argc=2\nargv[0]=args1\nargv[1]=--x\ngreeting=(unset)\n"), stderr: Expect::Exact(""), exit: 0),
+            ] }, [
+                r#"rust_start: `let argc = *sp; let argv = sp.add(1) as *const *const u8; let envp = argv.add(argc + 1);` (all inside one unsafe block). The `+ 1` skips argv's NULL terminator."#,
+                r#"cstr_bytes: count bytes until `*p.add(len) == 0`, then `core::slice::from_raw_parts(p, len)`."#,
+                r#"Args::get: bounds-check i against argc, then `cstr_bytes(*self.argv.add(i))`."#,
+                r#"Env::get: walk envp until you read a null pointer. For each entry, `kv.strip_prefix(name)` and then `rest.strip_prefix(b"=")`: both must succeed, so HOMER=... doesn't match HOME."#,
+            ]),
+            ex!("09_freestanding", "stdin1", "A streaming filter with a 64-byte buffer", Mode::Bin { rt: false, cases: &[
+                case!(args: [], stdin: "Hello, World!\n", stdout: Expect::Exact("Uryyb, Jbeyq!\n"), stderr: Expect::Exact("bytes=14 lines=1\n"), exit: 0),
+                case!(args: [], stdin: "The Quick Brown Fox Jumps Over The Lazy Dog. no_std Rust runs anywhere: MCUs, kernels, ECUs!\nThe Quick Brown Fox Jumps Over The Lazy Dog. no_std Rust runs anywhere: MCUs, kernels, ECUs!\nThe Quick Brown Fox Jumps Over The Lazy Dog. no_std Rust runs anywhere: MCUs, kernels, ECUs!\n", stdout: Expect::Exact("Gur Dhvpx Oebja Sbk Whzcf Bire Gur Ynml Qbt. ab_fgq Ehfg ehaf naljurer: ZPHf, xrearyf, RPHf!\nGur Dhvpx Oebja Sbk Whzcf Bire Gur Ynml Qbt. ab_fgq Ehfg ehaf naljurer: ZPHf, xrearyf, RPHf!\nGur Dhvpx Oebja Sbk Whzcf Bire Gur Ynml Qbt. ab_fgq Ehfg ehaf naljurer: ZPHf, xrearyf, RPHf!\n"), stderr: Expect::Exact("bytes=279 lines=3\n"), exit: 0),
+                case!(args: [], stdin: "", stdout: Expect::Exact(""), stderr: Expect::Exact("bytes=0 lines=0\n"), exit: 0),
+            ] }, [
+                r#"sys_read mirrors sys_write: number 0 in rax (x86_64) or 63 in x8 (aarch64), and pass `buf.as_mut_ptr()`."#,
+                r#"rot13: `b'a'..=b'z' => (b - b'a' + 13) % 26 + b'a'`, the same for uppercase, everything else unchanged."#,
+                r#"main: `loop { let n = sys_read(0, &mut buf); ... }`: -4 → continue, < 0 → return 1, 0 → break. Then transform `&mut buf[..n as usize]`, count, and `write_all(1, chunk)`."#,
+                r#"After the loop: `let _ = writeln!(Stderr, "bytes={bytes} lines={lines}");` and return 0."#,
+            ]),
+        ],
+        quiz: quiz!("09-freestanding"),
     },
 ];
 
