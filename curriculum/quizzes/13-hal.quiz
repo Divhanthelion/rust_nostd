@@ -1,0 +1,62 @@
+? What problem do the embedded-hal traits solve?
+- They generate register definitions from SVD files
+* They let a driver be written once against traits (OutputPin, I2c, SpiDevice…) and work with any HAL that implements them
+- They provide an RTOS for drivers
+- They replace the PAC
+> HALs implement the traits for a specific chip; drivers are generic over them.
+
+? Why does `OutputPin::set_high` return a `Result` in embedded-hal 1.0?
+- For backwards compatibility with 0.2
+* Some pins can fail (for example pins on an I2C/SPI I/O expander); on-chip pins use `Infallible`
+- So the compiler can optimise it away
+- Because it may allocate
+> A single trait covers both cases; with `Infallible` the error path compiles away.
+
+? A driver for an SPI sensor should be generic over which trait?
+- `SpiBus`, so it can control chip-select itself
+* `SpiDevice`, which owns chip-select and gives exclusive access to the bus for each transaction
+- `OutputPin` for each SPI line
+- `I2c`
+> `SpiDevice::transaction` asserts CS, runs the operations, deasserts CS. Bus sharing is handled by `embedded-hal-bus`.
+
+? What is the conventional error type for a generic driver over a bus?
+- `Box<dyn Error>`
+- `()` because errors don't matter in drivers
+* An enum like `Error<E> { Bus(E), WrongDevice(u8), ... }` that wraps the HAL's error type
+- `&'static str`
+> It preserves the bus error for the caller and adds driver-level failure modes.
+
+? Why do drivers typically take the bus by value and provide `release()`?
+- To allocate a buffer for the bus
+* Ownership guarantees exclusive access while the driver exists, and `release` returns the bus for reuse
+- The bus must be dropped after each use
+- It's required by `DelayNs`
+> Taking `&mut` also works; owning plus release is the most common pattern in driver crates.
+
+? Which embedded-hal 1.0 delay method is the only required one?
+- `delay_ms`
+- `delay_us`
+* `delay_ns`
+- `sleep`
+> `delay_us` and `delay_ms` have default implementations in terms of `delay_ns`.
+
+? How can a driver be unit-tested without hardware?
+- It can't; drivers need a board
+* Plug a mock implementation of the trait into the generic driver (recording or simulating), e.g. embedded-hal-mock
+- Use `std::thread::sleep`
+- Use Miri
+> Generic code over traits makes host-side mocks trivial, which enables CI testing of driver logic.
+
+? Why does a read-modify-write of a configuration register belong in the driver, not the application?
+- Applications can't use bitwise operators
+* The driver knows which bits it owns and must preserve the others (e.g. keep resolution bits when toggling shutdown)
+- I2C forbids writing full registers
+- It makes the bus faster
+> Encapsulating register-level details keeps invariants in one place.
+
+? What does embedded-hal-async add?
+* Async versions of the traits (e.g. `wait_for_high`, async SPI/I2C) for executors like Embassy
+- An allocator for drivers
+- Interrupt priorities
+- A logging framework
+> Async drivers let the CPU sleep or do other work while waiting for peripherals.

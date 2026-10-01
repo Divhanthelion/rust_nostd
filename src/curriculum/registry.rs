@@ -481,6 +481,31 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("12-bare-metal"),
     },
+    Module {
+        num: 13,
+        slug: "hal",
+        title: "Drivers & the embedded-hal Model",
+        summary: "generic drivers over OutputPin, DelayNs, I2c and SpiDevice, tested with mocks",
+        lesson: lesson!("13-hal"),
+        exercises: &[
+            ex!("13_hal", "hal1", "Generic drivers for pins and delays", Mode::Lib, [
+                r#"blink: `for _ in 0..times { self.pin.set_high()?; self.delay.delay_ms(on_ms); self.pin.set_low()?; self.delay.delay_ms(off_ms); } Ok(())`. The `?` returns the pin's error."#,
+                r#"show: `for (i, led) in self.leds.iter_mut().enumerate() { led.set_state(if i < level { PinState::High } else { PinState::Low })?; }`."#,
+                r#"poll: sample once. If it equals the stable state, reset the counter and return None. Otherwise increment; when the counter reaches THRESHOLD, flip the stable state, reset the counter and return the edge."#,
+            ]),
+            ex!("13_hal", "hal2", "An I2C temperature sensor driver", Mode::Lib, [
+                r#"Write a helper `fn read_reg<const N: usize>(&mut self, reg: u8) -> Result<[u8; N], Error<I2C::Error>>` that calls `self.i2c.write_read(self.address, &[reg], &mut buf).map_err(Error::Bus)?`."#,
+                r#"init: `let [id] = self.read_reg::<1>(0x0F)?;` and compare with 0xA1. temperature: `i16::from_be_bytes(self.read_reg::<2>(0x00)?)`, then `i32::from(raw) * 1000 / 256`."#,
+                r#"set_shutdown: read CONFIG, set or clear only bit 0 (`cfg | 0x01` / `cfg & !0x01`), then `self.i2c.write(self.address, &[0x01, new]).map_err(Error::Bus)`."#,
+            ]),
+            ex!("13_hal", "hal3", "An SPI CAN-controller driver", Mode::Lib, [
+                r#"Single-write commands: `self.spi.write(&[CMD_RESET]).map_err(Error::Spi)`, similarly WRITE `[0x02, addr, value]` and BIT MODIFY `[0x05, addr, mask, data]`."#,
+                r#"read_register needs write-then-read inside ONE transaction (CS stays low): `self.spi.transaction(&mut [Operation::Write(&[CMD_READ, addr]), Operation::Read(&mut buf)])`."#,
+                r#"set_mode: `self.bit_modify(CANCTRL, 0xE0, (mode as u8) << 5)?`, then compare `self.mode()?` with `mode as u8`. set_bit_timing: check `self.mode()? == Mode::Configuration as u8` first, then write `[0x02, 0x28, cnf3, cnf2, cnf1]`."#,
+            ]),
+        ],
+        quiz: quiz!("13-hal"),
+    },
 ];
 
 #[allow(dead_code)]

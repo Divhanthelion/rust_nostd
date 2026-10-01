@@ -769,7 +769,7 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
         explain(log, &r.stderr_text());
         return Verdict::Fail;
     }
-    stage_ok(log, &format!("{} bytes", fs::metadata(&elf_path).map(|m| m.len()).unwrap_or(0)));
+    stage_ok(log, "");
 
     n += 1;
     stage_start(log, n, total, "inspect vector table & entry point");
@@ -790,7 +790,8 @@ fn check_cortex_m(ctx: &Ctx, ex: &Exercise, rel: &Path, link: &str, expect: &str
     }
     let sp = elf.read_u32(0).unwrap_or(0);
     let reset = elf.read_u32(4).unwrap_or(0);
-    stage_ok(log, &format!("SP={sp:#010x} Reset={reset:#010x}"));
+    let (flash, ram) = elf.memory_usage(0x2000_0000);
+    stage_ok(log, &format!("SP={sp:#010x} Reset={reset:#010x} · flash {flash} B, static RAM {ram} B"));
 
     let Some(qemu) = qemu else {
         log.line(&term::yellow(
