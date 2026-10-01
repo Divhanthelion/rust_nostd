@@ -1,0 +1,69 @@
+? Why can't you write `static STATE: RefCell<u32> = RefCell::new(0);`?
+- `RefCell::new` isn't a `const fn`
+* Statics must be `Sync`, and `RefCell` allows unsynchronised mutation through `&`, so it is `!Sync`
+- `RefCell` requires alloc
+- Statics can't have interior mutability at all
+> Every thread and interrupt handler can reach a static. Wrap it in something `Sync`: an atomic, or `critical_section::Mutex<RefCell<u32>>`.
+
+? Which is the *only* primitive that makes mutation through a shared reference legal in Rust?
+- `Cell<T>`
+- `*mut T`
+* `UnsafeCell<T>`
+- `static mut`
+> `Cell`, `RefCell`, atomics and mutexes are all built on `UnsafeCell`. Mutating through `&T` any other way is UB.
+
+? Producer: `DATA.store(42, Relaxed); READY.store(true, X);` Consumer: `if READY.load(Y) { DATA.load(Relaxed) }`. Which (X, Y) guarantees the consumer sees 42?
+- (Relaxed, Relaxed)
+- (Acquire, Release)
+* (Release, Acquire)
+- (Relaxed, SeqCst)
+> A Release store synchronises with an Acquire load that reads its value: all writes before the release are visible after the acquire.
+
+? On a single-core MCU, main code holds a spin lock and an interrupt handler tries to take the same lock. What happens?
+- The interrupt waits until main releases the lock
+* Deadlock: the handler spins forever because main can't run until the handler returns
+- The lock is automatically upgraded to a critical section
+- The CPU raises a HardFault
+> That's why data shared with ISRs uses critical sections (disable interrupts) or lock-free structures, not spin locks.
+
+? What does the `CriticalSection<'cs>` token in `critical_section::Mutex::borrow` achieve?
+- It disables interrupts when created
+* It proves at compile time that you are inside a critical section, and its lifetime keeps the reference from escaping it
+- It counts how many times the mutex was locked
+- It makes the mutex re-entrant
+> Only `critical_section::with` can create a token, and `borrow(&'cs self, cs: CriticalSection<'cs>) -> &'cs T` ties the data's lifetime to the critical section.
+
+? What's the capacity of a classic SPSC ring buffer with `N` slots?
+- N
+* N - 1
+- N / 2
+- N + 1
+> One slot stays empty so that `head == tail` can mean "empty" unambiguously.
+
+? On `thumbv6m-none-eabi` (Cortex-M0), which of these is NOT available natively?
+- `AtomicU32::load`
+- `AtomicU32::store`
+* `AtomicU32::fetch_add`
+- `AtomicBool::store`
+> ARMv6-M has no exclusive load/store instructions, so no compare-and-swap or read-modify-write atomics. Use `portable-atomic` (critical-section based) or design around load/store.
+
+? For `unsafe impl<T> Sync for SpinLock<T>`, what bound on `T` is correct?
+- `T: Sync`
+* `T: Send`
+- `T: Copy`
+- no bound is needed
+> The lock gives one thread at a time `&mut T`, effectively moving access between threads, which requires `Send`. `Sync` isn't needed because accesses never overlap. (`std::sync::Mutex<T>` has the same `T: Send` bound.)
+
+? Which `Ordering` is sufficient for a statistics counter that's only ever incremented and read for display?
+* `Relaxed`
+- `Release`
+- `Acquire`
+- `SeqCst` is required for counters
+> The counter itself is atomic with any ordering. Ordering only matters when the atomic is used to publish *other* memory.
+
+? Why must interrupt-disabling critical sections be kept short?
+- They consume flash
+* All interrupts are delayed while they run, adding to worst-case interrupt latency
+- They can't contain function calls
+- They prevent the use of atomics
+> Real-time guarantees depend on bounded interrupt latency; a long critical section delays every interrupt in the system.

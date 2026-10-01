@@ -1,0 +1,62 @@
+? A no_std library uses `alloc::vec::Vec`. What must the final binary provide?
+- Nothing extra: `extern crate alloc` brings an allocator
+* A `#[global_allocator]` static implementing `GlobalAlloc`
+- A `#[panic_handler]` that allocates
+- The `std` crate
+> `alloc` only defines heap types; the allocator itself comes from the final program (or a crate like `embedded-alloc`). Without one the link fails.
+
+? Why do `GlobalAlloc::alloc` and `dealloc` take `&self` rather than `&mut self`?
+* The allocator is a shared `static` used from everywhere, so it must use interior mutability and be `Sync`
+- To allow the allocator to be `Copy`
+- Because allocation never changes state
+- So that `alloc` can be a `const fn`
+> There is no way to get `&mut` to a global static safely. Allocators use atomics, locks or critical sections internally.
+
+? What should `GlobalAlloc::alloc` do when it cannot satisfy a request?
+- Panic with "out of memory"
+- Return a dangling but aligned pointer
+* Return a null pointer
+- Loop until memory is freed
+> Null signals failure. The caller (e.g. `Vec`) then calls `handle_alloc_error`, which panics by default in no_std, or uses fallible APIs like `try_reserve` to handle it.
+
+? `align_up(13, 8)` (round 13 up to a multiple of 8) equals:
+- 8
+- 13
+* 16
+- 21
+> `(13 + 7) & !7 = 20 & !7 = 16`.
+
+? In a bump allocator, what does `dealloc` typically do?
+- Returns the block to a free list
+- Moves the bump pointer back by the block size
+* Nothing, or decrements a live counter and resets the heap when it reaches zero
+- Zeroes the block for security
+> Bump allocators can't free individual blocks (it'd leave holes), which is why they're so fast and deterministic.
+
+? Which allocator design gives bounded (O(1)) allocation time with low fragmentation, suitable for real-time systems?
+- First-fit linked list
+* TLSF (two-level segregated fit)
+- Best-fit search over all free blocks
+- Garbage collection
+> TLSF finds a suitable free block with bit operations on two levels of size classes, in constant time. `embedded-alloc` offers both a linked-list heap and a TLSF heap.
+
+? What is the `repr(C)` size of `struct S { a: u8, b: u32, c: u8 }`?
+- 6
+- 8
+* 12
+- 16
+> a@0, 3 bytes padding, b@4..8, c@8, then the size is padded to a multiple of 4 → 12. Reordering to (b, a, c) would give 8; `repr(Rust)` is allowed to do that for you.
+
+? Why can an arena return `&'a mut T` from a method taking `&self`?
+- Because `&self` methods can always return mutable references
+* Each allocation is a disjoint region of a buffer the arena exclusively borrows for `'a`, so the references never alias
+- Because the values are `Copy`
+- It can't; it must take `&mut self`
+> Uniqueness comes from disjointness (like `split_at_mut`), established by the bump pointer only moving forward. The `'a` lifetime keeps allocations from outliving the buffer.
+
+? A safety guideline says "no dynamic allocation after initialisation". Which design satisfies it while still using `Vec`?
+- Allocate in every control loop iteration but free immediately
+* Build all `Vec`s during start-up, then lock the allocator so further allocations fail
+- Use `Box::leak` in the main loop
+- Use `HashMap` instead of `Vec`
+> Allocation at init is deterministic and testable; locking the allocator afterwards turns accidental runtime allocations into immediate, detectable failures.

@@ -193,6 +193,83 @@ pub static MODULES: &[Module] = &[
         ],
         quiz: quiz!("05-memory"),
     },
+    Module {
+        num: 6,
+        slug: "alloc",
+        title: "The alloc Crate & Global Allocators",
+        summary: "Vec/String/BTreeMap in no_std, arenas, GlobalAlloc and Layout",
+        lesson: lesson!("06-alloc"),
+        exercises: &[
+            ex!("06_alloc", "alloc1", "The alloc toolbox", Mode::Lib, [
+                r#"Add `extern crate alloc;` under `#![no_std]`, then `use alloc::{boxed::Box, collections::BTreeMap, rc::Rc, string::String, vec::Vec};`."#,
+                r#"summarize: `let s = map.entry(f.id).or_default();` (Stats derives Default) then update count/bytes/max_len. render: `writeln!(out, "{:#05x} count={} ...", ...)` into a String (`core::fmt::Write` is imported)."#,
+                r#"busiest: collect `(id, count)` pairs into a Vec, `sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)))`, then `truncate(n)`."#,
+                r#"Filters: `Box::new(move |f| (lo..=hi).contains(&f.id))`. passes: `filters.iter().all(|f| f(frame))`. SharedLog: `Rc::new(RefCell::new(Vec::new()))`, `Rc::clone(&self.lines)`, `self.lines.borrow_mut().push(alloc::format!("{}: {}", self.prefix, msg))`."#,
+            ]),
+            ex!("06_alloc", "arena1", "A bump arena with a safe API", Mode::Lib, [
+                r#"align_up: `Some(addr.checked_add(align - 1)? & !(align - 1))`."#,
+                r#"alloc_layout: `let base = self.start as usize; let aligned = align_up(base.checked_add(self.next.get())?, layout.align())?; let offset = aligned - base; let end = offset.checked_add(layout.size())?;` then check `end <= capacity`, set `next`, return `NonNull::new(unsafe { self.start.add(offset) })`."#,
+                r#"alloc: `Layout::new::<T>()`, cast the pointer to `*mut T`, `p.write(value)` and return `&mut *p`, all in one unsafe block with a SAFETY comment."#,
+                r#"alloc_slice_copy: `Layout::array::<T>(src.len()).ok()?`, then `ptr::copy_nonoverlapping(src.as_ptr(), p, len)` and `slice::from_raw_parts_mut(p, len)`. alloc_str: copy the bytes, then `core::str::from_utf8_unchecked_mut`."#,
+            ]),
+            ex!("06_alloc", "alloc2", "Write a global allocator", Mode::Lib, [
+                r#"Everything happens inside `self.with_state(|s| { ... })`. Compute `base = self.heap.get() as usize`, then the aligned absolute start from `base + s.next`."#,
+                r#"Use checked arithmetic and return `ptr::null_mut()` on overflow or when `offset + layout.size() > N`. Otherwise set `s.next`, increment `s.live`, and return `self.heap.get().cast::<u8>().add(offset)`."#,
+                r#"dealloc: decrement `s.live` (saturating), and if it is now 0 set `s.next = 0`."#,
+            ]),
+            ex!("06_alloc", "layout1", "Size, alignment and padding by hand", Mode::Lib, [
+                r#"padding_needed: `(align - offset % align) % align`, or the bit trick `offset.wrapping_neg() & (align - 1)`."#,
+                r#"repr_c_layout: start from `Layout::from_size_align(0, 1)`, and for each field `let (next, offset) = layout.extend(Layout::from_size_align(size, align).ok()?).ok()?;`. Finish with `pad_to_align()`."#,
+                r#"best_size: copy the fields into a local `[(usize, usize); 8]` (return None if more than 8), sort the used part by alignment descending with `sort_unstable_by`, and reuse repr_c_layout. u32_array: `Layout::array::<u32>(n).ok()`."#,
+            ]),
+        ],
+        quiz: quiz!("06-alloc"),
+    },
+    Module {
+        num: 7,
+        slug: "sync",
+        title: "Interior Mutability, Atomics & Synchronization",
+        summary: "Send/Sync, cells, atomics and orderings, spinlocks, critical sections, SPSC queues",
+        lesson: lesson!("07-sync"),
+        exercises: &[
+            ex!("07_sync", "cells1", "Interior mutability without threads", Mode::Lib, [
+                r#"Cell: `self.frames.set(self.frames.get() + 1)`. take(): `Cell::take` returns the value and leaves `Default::default()` (0) behind."#,
+                r#"Sensor::new: `OnceCell::new()`, `RefCell::new([0; 4])`, and `LazyCell::new(build_lut)` (a plain `fn` works as the initialiser). calibrate is just `self.calibration.set(c)`."#,
+                r#"read: `let c = self.calibration.get()?;` then compute in i32 and clamp to the i16 range. Update the history with `let mut h = self.history.borrow_mut(); h.rotate_left(1); h[3] = v;`."#,
+                r#"try_clear_history: `*self.history.try_borrow_mut()? = [0; 4]; Ok(())`. The `?` converts nothing here: the error type is already BorrowMutError. lut_entry: LazyCell derefs to the array: `self.lut.get(i).copied()`."#,
+            ]),
+            ex!("07_sync", "atomics1", "Counters, flags and a mailbox", Mode::Lib, [
+                r#"record: `fetch_add(1, Relaxed)` for counts, `fetch_max`/`fetch_min` for latencies. take: `swap(0, Relaxed)` (and `swap(u32::MAX, ..)` for the minimum)."#,
+                r#"saturating_inc: load the current value, compute `current.saturating_add(1)`, and `compare_exchange_weak(current, new, ..)`; on `Err(actual)` retry with actual. Return `new` on success."#,
+                r#"EventFlags: `fetch_or(mask, Release)` to raise, `swap(0, Acquire)` to take everything at once."#,
+                r#"Mailbox::post: if `full.load(Acquire)` return false; else store the payload (Relaxed), then `full.store(true, Release)`. take: if `full.load(Acquire)`, read the payload, then `full.store(false, Release)`."#,
+            ]),
+            ex!("07_sync", "spinlock1", "A spin lock with an RAII guard", Mode::Lib, [
+                r#"The static in the tests needs `SpinLock<u64>: Sync`. Add `unsafe impl<T: Send> Sync for SpinLock<T> {}`: a lock moves *access* to T between threads, which is what Send means."#,
+                r#"lock: `while self.locked.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() { core::hint::spin_loop(); }` then return `SpinGuard { lock: self }`."#,
+                r#"Deref: `unsafe { &*self.lock.value.get() }`; DerefMut: `unsafe { &mut *self.lock.value.get() }`. Drop: `self.lock.locked.store(false, Ordering::Release)`. get_mut/into_inner: `UnsafeCell::get_mut` / `into_inner`."#,
+            ]),
+            ex!("07_sync", "once1", "Initialise exactly once, from any thread", Mode::Lib, [
+                r#"Start with `unsafe impl<T: Send + Sync> Sync for Once<T> {}`. Readers get &T from many threads (Sync), and the value may be dropped on a different thread than it was created on (Send)."#,
+                r#"get: if `state.load(Acquire) == READY`, return `unsafe { (*self.value.get()).assume_init_ref() }`."#,
+                r#"get_or_init: fast path via get(). Then `compare_exchange(EMPTY, RUNNING, Acquire, Acquire)`: if Ok you're the winner: write the value, `state.store(READY, Release)`. Everyone (winner included) then loops on get() with spin_loop() until it's Some."#,
+                r#"Drop: `if *self.state.get_mut() == READY { unsafe { self.value.get_mut().assume_init_drop() } }`. get_mut on an atomic needs no synchronisation because you have &mut self."#,
+            ]),
+            ex!("07_sync", "cs1", "Critical sections and the token pattern", Mode::Lib, [
+                r#"The statics need `Mutex<..>: Sync`: `unsafe impl<T: Send> Sync for Mutex<T> {}`. That's exactly the bound critical_section::Mutex uses."#,
+                r#"borrow: `unsafe { &*self.inner.get() }`. The signature already ties the output to the token's lifetime 'cs."#,
+                r#"Counter::increment: `interrupt::free(|cs| { let c = self.count.borrow(cs); c.set(c.get() + 1); c.get() })`."#,
+                r#"install: `interrupt::free(|cs| { let mut slot = SHARED_UART.borrow(cs).borrow_mut(); ... })`. with_uart: `...borrow_mut().as_mut().map(f)`. uninstall: `...borrow_mut().take()`."#,
+            ]),
+            ex!("07_sync", "spsc1", "A lock-free SPSC queue", Mode::Lib, [
+                r#"enqueue: `let tail = tail.load(Relaxed); let next = (tail + 1) % N;` If `next == head.load(Acquire)` it's full. Otherwise write the slot, then `tail.store(next, Release)`."#,
+                r#"Write a slot with `unsafe { (*self.q.buf[tail].get()).write(value) }`, read with `(*self.q.buf[head].get()).assume_init_read()`."#,
+                r#"dequeue: `let head = head.load(Relaxed);` empty if `head == tail.load(Acquire)`. Read the slot, then `head.store((head + 1) % N, Release)`. len: `(tail + N - head) % N`."#,
+                r#"Drop has &mut self: read both indices with `get_mut()` and `assume_init_drop()` each slot from head up to tail (wrapping)."#,
+            ]),
+        ],
+        quiz: quiz!("07-sync"),
+    },
 ];
 
 #[allow(dead_code)]
